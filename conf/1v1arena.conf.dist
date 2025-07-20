@@ -16,7 +16,7 @@ Arena1v1.Enable = 1
 #        Default:     0 - (Disabled)
 #                     1 - (Enabled)
 
-Arena1v1.Announcer = 1
+Arena1v1.Announcer = 0
 
 #
 #    Arena1v1.MinLevel
@@ -30,7 +30,7 @@ Arena1v1.MinLevel = 80
 #        Description: Costs for create an arena team
 #        Default:     400000 - (40 gold)
 
-Arena1v1.Costs = 400000
+Arena1v1.Costs = 40000
 
 #
 #    Arena1v1.VendorRating
@@ -107,6 +107,106 @@ Arena1v1.ArenaSlotID = 3
 #                false
 
 Arena1v1.EnableCommand = 1
+
+#
+###################################################################################################
+# TOURNAMENT SYSTEM CONFIGURATION
+###################################################################################################
+
+#
+#   Tournament.Enable
+#       Description: Enable/disable the tournament system
+#       Default:     1 - (Enabled)
+#                    0 - (Disabled)
+
+Tournament.Enable = 1
+
+#
+#   Tournament.DefaultWinnerRewardGold
+#       Description: Default gold reward for tournament winner (in gold)
+#       Default:     500
+
+Tournament.DefaultWinnerRewardGold = 500
+
+#
+#   Tournament.DefaultWinnerRewardItem
+#       Description: Default item ID reward for tournament winner
+#       Default:     0 - (No item reward)
+#       Example:     49426 - (Emblem of Frost)
+
+Tournament.DefaultWinnerRewardItem = 0
+
+#
+#   Tournament.DefaultWinnerTitle
+#       Description: Default title ID reward for tournament winner
+#       Default:     0 - (No title reward)
+#       Example:     1 - (Private title)
+
+Tournament.DefaultWinnerTitle = 0
+
+#
+#   Tournament.DefaultEntryFee
+#       Description: Default entry fee for tournaments (in gold)
+#       Default:     50
+
+Tournament.DefaultEntryFee = 50
+
+#
+#   Tournament.DefaultRegistrationDuration
+#       Description: Default registration duration in hours
+#       Default:     48 - (2 days)
+
+Tournament.DefaultRegistrationDuration = 48
+
+#
+#   Tournament.DefaultMaxParticipants
+#       Description: Default maximum participants per tournament
+#       Default:     64
+
+Tournament.DefaultMaxParticipants = 64
+
+#
+#   Tournament.EnableServerAnnouncements
+#       Description: Enable server-wide announcements for tournament events
+#       Default:     1 - (Enabled)
+#                    0 - (Disabled)
+
+Tournament.EnableServerAnnouncements = 1
+
+#
+#   Tournament.RunnerUpRewardGold
+#       Description: Gold reward for tournament runner-up (2nd place) in gold
+#       Default:     100
+
+Tournament.RunnerUpRewardGold = 100
+
+#
+#   Tournament.SemiFinalistRewardGold
+#       Description: Gold reward for semi-finalists (3rd/4th place) in gold
+#       Default:     25
+
+Tournament.SemiFinalistRewardGold = 25
+
+#
+#   Tournament.MinimumParticipantsToStart
+#       Description: Minimum participants required to start a tournament
+#       Default:     2
+
+Tournament.MinimumParticipantsToStart = 2
+
+#
+#   Tournament.ForfeitAfterAttempts
+#       Description: Number of join attempts before player is disqualified
+#       Default:     3
+
+Tournament.ForfeitAfterAttempts = 3
+
+#
+#   Tournament.AutoCleanupDays
+#       Description: Auto-cleanup finished tournaments after X days (0 = disabled)
+#       Default:     30
+
+Tournament.AutoCleanupDays = 30
 
 #
 ###################################################################################################

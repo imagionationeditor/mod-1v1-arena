@@ -1,0 +1,15 @@
+# Configuration options for mod-1v1-arena
+
+# Tournament System Configuration
+TOURNAMENT_ENABLED=1
+
+# Default tournament settings
+TOURNAMENT_DEFAULT_ENTRY_FEE=500000  # 50 gold
+TOURNAMENT_DEFAULT_WINNER_REWARD=5000000  # 500 gold
+TOURNAMENT_DEFAULT_MAX_PARTICIPANTS=64
+
+# Tournament announcement settings
+TOURNAMENT_ANNOUNCEMENTS=1
+
+# Auto cleanup old tournaments (days)
+TOURNAMENT_CLEANUP_DAYS=30
