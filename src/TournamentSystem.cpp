@@ -850,6 +850,621 @@ bool TournamentSystem::CheckForForfeits()
     return true;
 }
 
+bool TournamentSystem::CancelTournament(uint32 tournamentId)
+{
+    // Check if tournament exists
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT name, status FROM arena_tournaments WHERE id = {}",
+        tournamentId
+    );
+    
+    if (!result)
+        return false;
+        
+    auto fields = result->Fetch();
+    std::string name = fields[0].Get<std::string>();
+    std::string status = fields[1].Get<std::string>();
+    
+    // Can only cancel registration or ready tournaments
+    if (status != "registration" && status != "ready")
+    {
+        LOG_ERROR("tournament", "Cannot cancel tournament {} - invalid status: {}", tournamentId, status);
+        return false;
+    }
+    
+    // Refund entry fees to all registered players
+    QueryResult refundResult = CharacterDatabase.Query(
+        "SELECT player_guid, entry_fee_paid FROM arena_tournament_registrations WHERE tournament_id = {}",
+        tournamentId
+    );
+    
+    if (refundResult)
+    {
+        do
+        {
+            auto refundFields = refundResult->Fetch();
+            uint32 playerGuid = refundFields[0].Get<uint32>();
+            bool feePaid = refundFields[1].Get<bool>();
+            
+            if (feePaid)
+            {
+                // Refund logic - mark for refund (actual refund happens on login)
+                CharacterDatabase.Execute(
+                    "UPDATE arena_tournament_registrations SET entry_fee_paid = 0 WHERE tournament_id = {} AND player_guid = {}",
+                    tournamentId, playerGuid
+                );
+            }
+        } while (refundResult->NextRow());
+    }
+    
+    // Update tournament status
+    CharacterDatabase.Execute(
+        "UPDATE arena_tournaments SET status = 'cancelled' WHERE id = {}",
+        tournamentId
+    );
+    
+    // Announce cancellation
+    std::ostringstream announce;
+    announce << "|cffFFD700[Tournament]|r Tournament '|cffC0C0C0" << name 
+             << "|r' has been cancelled. All entry fees will be refunded.";
+    SendTournamentAnnouncement(announce.str());
+    
+    LOG_INFO("tournament", "Tournament '{}' (ID: {}) cancelled", name, tournamentId);
+    LogTournamentEvent(tournamentId, "Tournament cancelled");
+    
+    return true;
+}
+
+bool TournamentSystem::UnregisterPlayer(uint32 tournamentId, uint32 playerGuid)
+{
+    // Check if player is registered
+    if (!IsPlayerRegistered(tournamentId, playerGuid))
+        return false;
+    
+    // Remove registration
+    CharacterDatabase.Execute(
+        "DELETE FROM arena_tournament_registrations WHERE tournament_id = {} AND player_guid = {}",
+        tournamentId, playerGuid
+    );
+    
+    // Update participant count
+    CharacterDatabase.Execute(
+        "UPDATE arena_tournaments SET current_participants = GREATEST(current_participants - 1, 0) WHERE id = {}",
+        tournamentId
+    );
+    
+    LOG_INFO("tournament", "Player {} unregistered from tournament {}", playerGuid, tournamentId);
+    
+    return true;
+}
+
+bool TournamentSystem::PayEntryFee(uint32 tournamentId, Player* player)
+{
+    if (!player)
+        return false;
+        
+    uint32 playerGuid = player->GetGUID().GetCounter();
+    
+    // Check if player is registered but hasn't paid
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT entry_fee_paid FROM arena_tournament_registrations WHERE tournament_id = {} AND player_guid = {}",
+        tournamentId, playerGuid
+    );
+    
+    if (!result)
+        return false;
+        
+    bool alreadyPaid = (*result)[0].Get<bool>();
+    if (alreadyPaid)
+        return true; // Already paid
+    
+    // Get tournament entry fee
+    QueryResult feeResult = CharacterDatabase.Query(
+        "SELECT entry_fee FROM arena_tournaments WHERE id = {}",
+        tournamentId
+    );
+    
+    if (!feeResult)
+        return false;
+        
+    uint32 entryFee = (*feeResult)[0].Get<uint32>();
+    
+    // Check if player has enough gold
+    if (!HasEnoughGold(player, entryFee))
+    {
+        ChatHandler(player->GetSession()).PSendSysMessage("You need %u gold to pay the entry fee!", entryFee / 10000);
+        return false;
+    }
+    
+    // Deduct entry fee
+    player->ModifyMoney(-int32(entryFee));
+    
+    // Mark as paid
+    CharacterDatabase.Execute(
+        "UPDATE arena_tournament_registrations SET entry_fee_paid = 1 WHERE tournament_id = {} AND player_guid = {}",
+        tournamentId, playerGuid
+    );
+    
+    ChatHandler(player->GetSession()).PSendSysMessage("|cff00FF00Entry fee of %u gold has been paid.|r", entryFee / 10000);
+    LOG_INFO("tournament", "Player {} paid entry fee for tournament {}", player->GetName(), tournamentId);
+    
+    return true;
+}
+
+std::vector<TournamentInfo> TournamentSystem::GetAllTournaments()
+{
+    std::vector<TournamentInfo> tournaments;
+    
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT id, name, description, entry_fee, UNIX_TIMESTAMP(registration_start), UNIX_TIMESTAMP(registration_end), "
+        "UNIX_TIMESTAMP(tournament_start), UNIX_TIMESTAMP(tournament_end), status, max_participants, current_participants, "
+        "winner_reward_gold, winner_reward_item, winner_title, created_by, UNIX_TIMESTAMP(created_at) "
+        "FROM arena_tournaments ORDER BY created_at DESC"
+    );
+    
+    if (!result)
+        return tournaments;
+        
+    do
+    {
+        auto fields = result->Fetch();
+        TournamentInfo info;
+        info.id = fields[0].Get<uint32>();
+        info.name = fields[1].Get<std::string>();
+        info.description = fields[2].Get<std::string>();
+        info.entryFee = fields[3].Get<uint32>();
+        info.registrationStart = fields[4].Get<uint32>();
+        info.registrationEnd = fields[5].Get<uint32>();
+        info.tournamentStart = fields[6].Get<uint32>();
+        info.tournamentEnd = fields[7].Get<uint32>();
+        
+        std::string statusStr = fields[8].Get<std::string>();
+        if (statusStr == "registration") info.status = TOURNAMENT_STATUS_REGISTRATION;
+        else if (statusStr == "ready") info.status = TOURNAMENT_STATUS_READY;
+        else if (statusStr == "active") info.status = TOURNAMENT_STATUS_ACTIVE;
+        else if (statusStr == "finished") info.status = TOURNAMENT_STATUS_FINISHED;
+        else if (statusStr == "cancelled") info.status = TOURNAMENT_STATUS_CANCELLED;
+        else info.status = TOURNAMENT_STATUS_FINISHED;
+        
+        info.maxParticipants = fields[9].Get<uint32>();
+        info.currentParticipants = fields[10].Get<uint32>();
+        info.winnerRewardGold = fields[11].Get<uint32>();
+        info.winnerRewardItem = fields[12].Get<uint32>();
+        info.winnerTitle = fields[13].Get<uint32>();
+        info.createdBy = fields[14].Get<uint32>();
+        info.createdAt = fields[15].Get<uint32>();
+        
+        tournaments.push_back(info);
+    } while (result->NextRow());
+    
+    return tournaments;
+}
+
+TournamentInfo TournamentSystem::GetTournamentInfo(uint32 tournamentId)
+{
+    TournamentInfo info;
+    info.id = 0; // Default to invalid
+    
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT id, name, description, entry_fee, UNIX_TIMESTAMP(registration_start), UNIX_TIMESTAMP(registration_end), "
+        "UNIX_TIMESTAMP(tournament_start), UNIX_TIMESTAMP(tournament_end), status, max_participants, current_participants, "
+        "winner_reward_gold, winner_reward_item, winner_title, created_by, UNIX_TIMESTAMP(created_at) "
+        "FROM arena_tournaments WHERE id = {}",
+        tournamentId
+    );
+    
+    if (!result)
+        return info;
+        
+    auto fields = result->Fetch();
+    info.id = fields[0].Get<uint32>();
+    info.name = fields[1].Get<std::string>();
+    info.description = fields[2].Get<std::string>();
+    info.entryFee = fields[3].Get<uint32>();
+    info.registrationStart = fields[4].Get<uint32>();
+    info.registrationEnd = fields[5].Get<uint32>();
+    info.tournamentStart = fields[6].Get<uint32>();
+    info.tournamentEnd = fields[7].Get<uint32>();
+    
+    std::string statusStr = fields[8].Get<std::string>();
+    if (statusStr == "registration") info.status = TOURNAMENT_STATUS_REGISTRATION;
+    else if (statusStr == "ready") info.status = TOURNAMENT_STATUS_READY;
+    else if (statusStr == "active") info.status = TOURNAMENT_STATUS_ACTIVE;
+    else if (statusStr == "finished") info.status = TOURNAMENT_STATUS_FINISHED;
+    else if (statusStr == "cancelled") info.status = TOURNAMENT_STATUS_CANCELLED;
+    else info.status = TOURNAMENT_STATUS_FINISHED;
+    
+    info.maxParticipants = fields[9].Get<uint32>();
+    info.currentParticipants = fields[10].Get<uint32>();
+    info.winnerRewardGold = fields[11].Get<uint32>();
+    info.winnerRewardItem = fields[12].Get<uint32>();
+    info.winnerTitle = fields[13].Get<uint32>();
+    info.createdBy = fields[14].Get<uint32>();
+    info.createdAt = fields[15].Get<uint32>();
+    
+    return info;
+}
+
+std::vector<TournamentRegistration> TournamentSystem::GetTournamentRegistrations(uint32 tournamentId)
+{
+    std::vector<TournamentRegistration> registrations;
+    
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT id, player_guid, character_name, UNIX_TIMESTAMP(registration_time), entry_fee_paid, status "
+        "FROM arena_tournament_registrations WHERE tournament_id = {} ORDER BY registration_time",
+        tournamentId
+    );
+    
+    if (!result)
+        return registrations;
+        
+    do
+    {
+        auto fields = result->Fetch();
+        TournamentRegistration reg;
+        reg.id = fields[0].Get<uint32>();
+        reg.playerGuid = fields[1].Get<uint32>();
+        reg.characterName = fields[2].Get<std::string>();
+        reg.registrationTime = fields[3].Get<uint32>();
+        reg.entryFeePaid = fields[4].Get<bool>();
+        reg.confirmed = (fields[5].Get<std::string>() == "confirmed");
+        
+        registrations.push_back(reg);
+    } while (result->NextRow());
+    
+    return registrations;
+}
+
+std::vector<TournamentRound> TournamentSystem::GetTournamentBracket(uint32 tournamentId)
+{
+    std::vector<TournamentRound> rounds;
+    
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT id, round_number, round_name, status, UNIX_TIMESTAMP(start_time), UNIX_TIMESTAMP(end_time) "
+        "FROM arena_tournament_rounds WHERE tournament_id = {} ORDER BY round_number",
+        tournamentId
+    );
+    
+    if (!result)
+        return rounds;
+        
+    do
+    {
+        auto fields = result->Fetch();
+        TournamentRound round;
+        round.id = fields[0].Get<uint32>();
+        round.tournamentId = tournamentId;
+        round.roundNumber = fields[1].Get<uint32>();
+        round.roundName = fields[2].Get<std::string>();
+        
+        std::string statusStr = fields[3].Get<std::string>();
+        if (statusStr == "pending") round.status = ROUND_STATUS_PENDING;
+        else if (statusStr == "active") round.status = ROUND_STATUS_ACTIVE;
+        else if (statusStr == "completed") round.status = ROUND_STATUS_COMPLETED;
+        else round.status = ROUND_STATUS_PENDING;
+        
+        round.startTime = fields[4].Get<uint32>();
+        round.endTime = fields[5].Get<uint32>();
+        
+        // Get matches for this round
+        QueryResult matchResult = CharacterDatabase.Query(
+            "SELECT id, match_number, player1_guid, player2_guid, player1_name, player2_name, "
+            "winner_guid, status, UNIX_TIMESTAMP(match_start), UNIX_TIMESTAMP(match_end), "
+            "join_attempts_player1, join_attempts_player2, battleground_id "
+            "FROM arena_tournament_matches WHERE round_id = {} ORDER BY match_number",
+            round.id
+        );
+        
+        if (matchResult)
+        {
+            do
+            {
+                auto matchFields = matchResult->Fetch();
+                TournamentMatch match;
+                match.id = matchFields[0].Get<uint32>();
+                match.tournamentId = tournamentId;
+                match.roundId = round.id;
+                match.matchNumber = matchFields[1].Get<uint32>();
+                match.player1Guid = matchFields[2].Get<uint32>();
+                match.player2Guid = matchFields[3].Get<uint32>();
+                match.player1Name = matchFields[4].Get<std::string>();
+                match.player2Name = matchFields[5].Get<std::string>();
+                match.winnerGuid = matchFields[6].Get<uint32>();
+                
+                std::string matchStatusStr = matchFields[7].Get<std::string>();
+                if (matchStatusStr == "pending") match.status = MATCH_STATUS_PENDING;
+                else if (matchStatusStr == "active") match.status = MATCH_STATUS_ACTIVE;
+                else if (matchStatusStr == "completed") match.status = MATCH_STATUS_COMPLETED;
+                else if (matchStatusStr == "forfeit") match.status = MATCH_STATUS_FORFEIT;
+                else match.status = MATCH_STATUS_PENDING;
+                
+                match.matchStart = matchFields[8].Get<uint32>();
+                match.matchEnd = matchFields[9].Get<uint32>();
+                match.joinAttemptsPlayer1 = matchFields[10].Get<uint32>();
+                match.joinAttemptsPlayer2 = matchFields[11].Get<uint32>();
+                match.battlegroundId = matchFields[12].Get<uint32>();
+                
+                round.matches.push_back(match);
+            } while (matchResult->NextRow());
+        }
+        
+        rounds.push_back(round);
+    } while (result->NextRow());
+    
+    return rounds;
+}
+
+TournamentMatch TournamentSystem::GetPlayerCurrentMatch(uint32 playerGuid)
+{
+    TournamentMatch match;
+    match.id = 0; // Default to invalid
+    
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT m.id, m.tournament_id, m.round_id, m.match_number, m.player1_guid, m.player2_guid, "
+        "m.player1_name, m.player2_name, m.winner_guid, m.status, "
+        "UNIX_TIMESTAMP(m.match_start), UNIX_TIMESTAMP(m.match_end), "
+        "m.join_attempts_player1, m.join_attempts_player2, m.battleground_id "
+        "FROM arena_tournament_matches m "
+        "JOIN arena_tournament_rounds r ON m.round_id = r.id "
+        "JOIN arena_tournaments t ON r.tournament_id = t.id "
+        "WHERE (m.player1_guid = {} OR m.player2_guid = {}) "
+        "AND m.status IN ('pending', 'active') AND t.status = 'active' "
+        "ORDER BY r.round_number DESC, m.match_number LIMIT 1",
+        playerGuid, playerGuid
+    );
+    
+    if (!result)
+        return match;
+        
+    auto fields = result->Fetch();
+    match.id = fields[0].Get<uint32>();
+    match.tournamentId = fields[1].Get<uint32>();
+    match.roundId = fields[2].Get<uint32>();
+    match.matchNumber = fields[3].Get<uint32>();
+    match.player1Guid = fields[4].Get<uint32>();
+    match.player2Guid = fields[5].Get<uint32>();
+    match.player1Name = fields[6].Get<std::string>();
+    match.player2Name = fields[7].Get<std::string>();
+    match.winnerGuid = fields[8].Get<uint32>();
+    
+    std::string statusStr = fields[9].Get<std::string>();
+    if (statusStr == "pending") match.status = MATCH_STATUS_PENDING;
+    else if (statusStr == "active") match.status = MATCH_STATUS_ACTIVE;
+    else if (statusStr == "completed") match.status = MATCH_STATUS_COMPLETED;
+    else if (statusStr == "forfeit") match.status = MATCH_STATUS_FORFEIT;
+    else match.status = MATCH_STATUS_PENDING;
+    
+    match.matchStart = fields[10].Get<uint32>();
+    match.matchEnd = fields[11].Get<uint32>();
+    match.joinAttemptsPlayer1 = fields[12].Get<uint32>();
+    match.joinAttemptsPlayer2 = fields[13].Get<uint32>();
+    match.battlegroundId = fields[14].Get<uint32>();
+    
+    return match;
+}
+
+std::map<std::string, uint32> TournamentSystem::GetPlayerTournamentStats(uint32 playerGuid)
+{
+    std::map<std::string, uint32> stats;
+    
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT tournaments_participated, tournaments_won, total_matches_played, total_matches_won, total_gold_earned "
+        "FROM arena_tournament_player_stats WHERE player_guid = {}",
+        playerGuid
+    );
+    
+    if (!result)
+    {
+        // Return zeros if no stats found
+        stats["tournaments_participated"] = 0;
+        stats["tournaments_won"] = 0;
+        stats["total_matches_played"] = 0;
+        stats["total_matches_won"] = 0;
+        stats["total_gold_earned"] = 0;
+        return stats;
+    }
+    
+    auto fields = result->Fetch();
+    stats["tournaments_participated"] = fields[0].Get<uint32>();
+    stats["tournaments_won"] = fields[1].Get<uint32>();
+    stats["total_matches_played"] = fields[2].Get<uint32>();
+    stats["total_matches_won"] = fields[3].Get<uint32>();
+    stats["total_gold_earned"] = fields[4].Get<uint32>();
+    
+    return stats;
+}
+
+bool TournamentSystem::IsPlayerRegistered(uint32 tournamentId, uint32 playerGuid)
+{
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT id FROM arena_tournament_registrations WHERE tournament_id = {} AND player_guid = {}",
+        tournamentId, playerGuid
+    );
+    
+    return result != nullptr;
+}
+
+std::string TournamentSystem::GetTournamentStatusString(TournamentStatus status)
+{
+    switch (status)
+    {
+        case TOURNAMENT_STATUS_REGISTRATION: return "Registration";
+        case TOURNAMENT_STATUS_READY: return "Ready";
+        case TOURNAMENT_STATUS_ACTIVE: return "Active";
+        case TOURNAMENT_STATUS_FINISHED: return "Finished";
+        case TOURNAMENT_STATUS_CANCELLED: return "Cancelled";
+        default: return "Unknown";
+    }
+}
+
+std::string TournamentSystem::GetMatchStatusString(TournamentMatchStatus status)
+{
+    switch (status)
+    {
+        case MATCH_STATUS_PENDING: return "Pending";
+        case MATCH_STATUS_ACTIVE: return "Active";
+        case MATCH_STATUS_COMPLETED: return "Completed";
+        case MATCH_STATUS_FORFEIT: return "Forfeit";
+        default: return "Unknown";
+    }
+}
+
+bool TournamentSystem::ForceStartMatch(uint32 matchId)
+{
+    // Get match info
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT tournament_id, player1_guid, player2_guid, status FROM arena_tournament_matches WHERE id = {}",
+        matchId
+    );
+    
+    if (!result)
+        return false;
+        
+    auto fields = result->Fetch();
+    uint32 tournamentId = fields[0].Get<uint32>();
+    uint32 player1Guid = fields[1].Get<uint32>();
+    uint32 player2Guid = fields[2].Get<uint32>();
+    std::string status = fields[3].Get<std::string>();
+    
+    if (status != "pending")
+    {
+        LOG_ERROR("tournament", "Cannot force start match {} - invalid status: {}", matchId, status);
+        return false;
+    }
+    
+    // Create battleground for the match
+    uint32 bgTypeId = sConfigMgr->GetOption<uint32>("Tournament.BattlegroundTypeId", 3); // Arena
+    
+    Battleground* bg = sBattlegroundMgr->CreateNewBattleground(bgTypeId, 2, 0, false);
+    if (!bg)
+    {
+        LOG_ERROR("tournament", "Failed to create battleground for match {}", matchId);
+        return false;
+    }
+    
+    // Update match with battleground ID
+    CharacterDatabase.Execute(
+        "UPDATE arena_tournament_matches SET battleground_id = {}, status = 'active', match_start = NOW() WHERE id = {}",
+        bg->GetID(), matchId
+    );
+    
+    // Invite players to battleground
+    if (Player* player1 = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(player1Guid)))
+    {
+        player1->GetSession()->QueuePacket(bg->GetBattlegroundEntryPoint());
+    }
+    
+    if (Player* player2 = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(player2Guid)))
+    {
+        player2->GetSession()->QueuePacket(bg->GetBattlegroundEntryPoint());
+    }
+    
+    LOG_INFO("tournament", "Match {} forced to start with battleground ID {}", matchId, bg->GetID());
+    LogTournamentEvent(tournamentId, "Match " + std::to_string(matchId) + " forced to start");
+    
+    return true;
+}
+
+bool TournamentSystem::DisqualifyPlayer(uint32 tournamentId, uint32 playerGuid)
+{
+    // Check if player is registered
+    if (!IsPlayerRegistered(tournamentId, playerGuid))
+        return false;
+    
+    // Unregister player
+    UnregisterPlayer(tournamentId, playerGuid);
+    
+    // Mark any active matches as forfeit
+    QueryResult matchResult = CharacterDatabase.Query(
+        "SELECT id, player1_guid, player2_guid FROM arena_tournament_matches "
+        "WHERE tournament_id = {} AND (player1_guid = {} OR player2_guid = {}) AND status IN ('pending', 'active')",
+        tournamentId, playerGuid, playerGuid
+    );
+    
+    if (matchResult)
+    {
+        do
+        {
+            auto fields = matchResult->Fetch();
+            uint32 matchId = fields[0].Get<uint32>();
+            uint32 p1 = fields[1].Get<uint32>();
+            uint32 p2 = fields[2].Get<uint32>();
+            
+            uint32 winnerGuid = (p1 == playerGuid) ? p2 : p1;
+            
+            CharacterDatabase.Execute(
+                "UPDATE arena_tournament_matches SET winner_guid = {}, status = 'forfeit', match_end = NOW() WHERE id = {}",
+                winnerGuid, matchId
+            );
+            
+            // Process match result
+            ProcessMatchResult(matchId, winnerGuid);
+            
+            LOG_INFO("tournament", "Player {} disqualified from match {}, opponent {} wins by forfeit", playerGuid, matchId, winnerGuid);
+        } while (matchResult->NextRow());
+    }
+    
+    LOG_INFO("tournament", "Player {} disqualified from tournament {}", playerGuid, tournamentId);
+    LogTournamentEvent(tournamentId, "Player " + std::to_string(playerGuid) + " disqualified");
+    
+    return true;
+}
+
+void TournamentSystem::OnPlayerLogout(Player* player)
+{
+    if (!player)
+        return;
+        
+    uint32 playerGuid = player->GetGUID().GetCounter();
+    
+    // Check if player has an active match
+    TournamentMatch match = GetPlayerCurrentMatch(playerGuid);
+    if (match.id > 0 && match.status == MATCH_STATUS_ACTIVE)
+    {
+        // Increment join attempts
+        bool isPlayer1 = (match.player1Guid == playerGuid);
+        CharacterDatabase.Execute(
+            "UPDATE arena_tournament_matches SET {} = {} + 1 WHERE id = {}",
+            isPlayer1 ? "join_attempts_player1" : "join_attempts_player2",
+            isPlayer1 ? match.joinAttemptsPlayer1 : match.joinAttemptsPlayer2,
+            match.id
+        );
+        
+        LOG_INFO("tournament", "Player {} logged out during active match {}, attempt count incremented", playerGuid, match.id);
+    }
+}
+
+void TournamentSystem::OnBattlegroundEnd(uint32 battlegroundId, uint32 winnerGuid)
+{
+    // Find match associated with this battleground
+    QueryResult result = CharacterDatabase.Query(
+        "SELECT id, tournament_id FROM arena_tournament_matches WHERE battleground_id = {} AND status = 'active'",
+        battlegroundId
+    );
+    
+    if (!result)
+        return;
+        
+    auto fields = result->Fetch();
+    uint32 matchId = fields[0].Get<uint32>();
+    uint32 tournamentId = fields[1].Get<uint32>();
+    
+    // Process match result
+    ProcessMatchResult(matchId, winnerGuid);
+    
+    LOG_INFO("tournament", "Battleground {} ended, match {} processed with winner {}", battlegroundId, matchId, winnerGuid);
+}
+
+void TournamentSystem::LogTournamentEvent(uint32 tournamentId, const std::string& event)
+{
+    CharacterDatabase.Execute(
+        "INSERT INTO arena_tournament_logs (tournament_id, event, event_time) VALUES ({}, '{}', NOW())",
+        tournamentId, event
+    );
+    
+    LOG_INFO("tournament", "Tournament {}: {}", tournamentId, event);
+}
+
 // WorldScript for Tournament System
 class TournamentSystemWorldScript : public WorldScript
 {

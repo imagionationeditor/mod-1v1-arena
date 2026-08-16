@@ -1,48 +1,52 @@
-!.gitignore
+```
+# Build artifacts
+*.o
+*.obj
+*.a
+*.so
+*.dll
+*.exe
+*.out
+build/
+dist/
 
-#
-#Generic
-#
+# Dependencies
+venv/
+.venv/
+__pycache__/
+*.egg-info/
+.node-version
+.python-version
 
-.directory
-.mailmap
-*.orig
-*.rej
-*.*~
-.hg/
-*.kdev*
-.DS_Store
-CMakeLists.txt.user
-*.bak
-*.patch
-*.diff
-*.REMOTE.*
-*.BACKUP.*
-*.BASE.*
-*.LOCAL.*
+# CMake specific
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+compile_commands.json
 
-#
-# IDE & other softwares
-#
-/.settings/
-/.externalToolBuilders/*
-# exclude in all levels
-nbproject/
-.sync.ffs_db
-*.kate-swp
-
-#
-# Eclipse
-#
-*.pydevproject
-.metadata
-.gradle
-tmp/
+# Logs and temp files
+*.log
 *.tmp
 *.swp
-*~.nib
-local.properties
-.settings/
-.loadpath
-.project
-.cproject
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# System
+.DS_Store
+Thumbs.db
+```
