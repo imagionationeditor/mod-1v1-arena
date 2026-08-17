@@ -95,6 +95,15 @@ CREATE TABLE IF NOT EXISTS `arena_tournament_player_stats` (
     `current_season_points` INT DEFAULT 0
 );
 
+-- جدول لاگ تورنمنت‌ها
+CREATE TABLE IF NOT EXISTS `arena_tournament_logs` (
+    `id` INT AUTO_INCREMENT PRIMARY KEY,
+    `tournament_id` INT NOT NULL,
+    `event` VARCHAR(255) NOT NULL,
+    `event_time` DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (`tournament_id`) REFERENCES `arena_tournaments`(`id`) ON DELETE CASCADE
+);
+
 -- اینسرت کردن تورنمنت نمونه
 INSERT INTO `arena_tournaments` (`name`, `description`, `entry_fee`, `registration_start`, `registration_end`, `winner_reward_gold`, `created_by`) 
 VALUES 

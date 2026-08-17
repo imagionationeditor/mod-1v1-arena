@@ -29,6 +29,7 @@
 #include "World.h"
 #include <iomanip>
 #include <sstream>
+#include <unordered_map>
 
 #define NPC_TEXT_ENTRY_1v1 999992
 
@@ -41,6 +42,9 @@ uint32 ARENA_SLOT_1V1 = 3;
 
 //Config
 std::vector<uint32> forbiddenTalents;
+
+// Session-scoped flag for tournament creation mode (replaces HasInGuildInvite hack)
+std::unordered_map<uint32 /*playerGuid*/, bool> g_awaitingTournamentName;
 
 enum npcActions {
     NPC_ARENA_1V1_ACTION_CREATE_ARENA_TEAM = 1,
@@ -78,10 +82,10 @@ enum npcActions {
     NPC_ARENA_1V1_ACTION_ADMIN_REWARD_SETTINGS = 215,
     NPC_ARENA_1V1_ACTION_ADMIN_GENERAL_SETTINGS = 216,
     
-    // Tournament specific actions (300+ range for dynamic tournament IDs)
-    NPC_ARENA_1V1_ACTION_TOURNAMENT_DETAILS_BASE = 1000,
-    NPC_ARENA_1V1_ACTION_TOURNAMENT_REGISTER_BASE = 2000,
-    NPC_ARENA_1V1_ACTION_TOURNAMENT_BRACKET_BASE = 3000,
+    // Tournament specific actions (300+ range for dynamic tournament IDs with larger gaps)
+    NPC_ARENA_1V1_ACTION_TOURNAMENT_DETAILS_BASE = 10000,
+    NPC_ARENA_1V1_ACTION_TOURNAMENT_REGISTER_BASE = 20000,
+    NPC_ARENA_1V1_ACTION_TOURNAMENT_BRACKET_BASE = 30000,
 };
 
 
@@ -155,7 +159,7 @@ public:
     void OnPlayerChat(Player* player, uint32 type, uint32 lang, std::string& msg) override
     {
         // Handle tournament creation from chat
-        if (player->GetSession()->HasInGuildInvite() && player->GetSession()->GetSecurity() >= SEC_GAMEMASTER && type == CHAT_MSG_SAY)
+        if (g_awaitingTournamentName[player->GetGUID().GetCounter()] && player->GetSession()->GetSecurity() >= SEC_GAMEMASTER && type == CHAT_MSG_SAY)
         {
             // Player is in tournament creation mode
             std::string tournamentName = msg;
@@ -191,7 +195,7 @@ public:
                 success << "\n|cFFFFD700Max Players:|r |cFFFFFFFF" << maxParticipants << "|r";
                 success << "\n|cFFFFD700Winner Prize:|r |cFFFFD700" << (winnerGold / 10000) << " gold|r";
                 
-                ChatHandler(player->GetSession()).PSendSysMessage("%s", success.str().c_str());
+                ChatHandler(player->GetSession()).PSendSysMessage("{}", success.str());
                 
                 // Announce to server
                 std::ostringstream announce;
@@ -206,7 +210,7 @@ public:
             }
             
             // Clear the creation mode flag
-            player->GetSession()->SetInGuildInvite(false);
+            g_awaitingTournamentName[player->GetGUID().GetCounter()] = false;
             
             // Suppress the original chat message since we handled it
             msg = "";
@@ -332,7 +336,7 @@ bool npc_1v1arena::OnGossipSelect(Player* player, Creature* creature, uint32 /*s
             }
             else
             {
-                handler.PSendSysMessage("|cFFFF0000You need to be level %u+ to create a 1v1 arena team.|r", sConfigMgr->GetOption<uint32>("Arena1v1.MinLevel", 80));
+                handler.PSendSysMessage("|cFFFF0000You need to be level {}+ to create a 1v1 arena team.|r", sConfigMgr->GetOption<uint32>("Arena1v1.MinLevel", 80));
                 return true;
             }
             CloseGossipMenuFor(player);
@@ -397,7 +401,7 @@ bool npc_1v1arena::OnGossipSelect(Player* player, Creature* creature, uint32 /*s
                 s << "\n|cFFFFD700Week Wins: |cFF00FF00" << stats.WeekWins << "|r";
                 s << "\n|cFFFFD700============================================|r";
 
-                ChatHandler(player->GetSession()).PSendSysMessage("%s", s.str().c_str());
+                ChatHandler(player->GetSession()).PSendSysMessage("{}", s.str());
             }
             else
             {
@@ -491,8 +495,10 @@ bool npc_1v1arena::OnGossipSelect(Player* player, Creature* creature, uint32 /*s
 
         case NPC_ARENA_1V1_ACTION_ADMIN_CREATE_ADVANCED:
         {
+            // Advanced creation is currently disabled - use basic creation instead
+            ChatHandler(player->GetSession()).PSendSysMessage("|cFFFF0000Advanced tournament creation is coming soon! Please use Quick Creation for now.|r");
             if (IsPlayerAdmin(player))
-                ShowAdvancedTournamentCreation(player, creature);
+                ShowBasicTournamentCreation(player, creature);
             else
                 OnGossipHello(player, creature);
         }
@@ -568,11 +574,11 @@ bool npc_1v1arena::OnGossipSelect(Player* player, Creature* creature, uint32 /*s
                 uint32 tournamentId = action - 5000;
                 if (sTournamentSystem->StartTournament(tournamentId))
                 {
-                    ChatHandler(player->GetSession()).PSendSysMessage("|cFF00FF00Tournament %u started successfully!|r", tournamentId);
+                    ChatHandler(player->GetSession()).PSendSysMessage("Tournament {} started successfully!", tournamentId);
                 }
                 else
                 {
-                    ChatHandler(player->GetSession()).PSendSysMessage("|cFFFF0000Failed to start tournament %u!|r", tournamentId);
+                    ChatHandler(player->GetSession()).PSendSysMessage("Failed to start tournament {}!", tournamentId);
                 }
                 ShowStartTournamentMenu(player, creature);
             }
@@ -580,54 +586,10 @@ bool npc_1v1arena::OnGossipSelect(Player* player, Creature* creature, uint32 /*s
             else if (action >= 6000 && action < 7000 && IsPlayerAdmin(player))
             {
                 uint32 tournamentId = action - 6000;
-                
-                // Cancel tournament by updating status and refunding fees
-                CharacterDatabase.Execute(
-                    "UPDATE arena_tournaments SET status = 'cancelled' WHERE id = {}",
-                    tournamentId
-                );
-                
-                // Refund entry fees to all registered players
-                QueryResult result = CharacterDatabase.Query(
-                    "SELECT reg.player_guid, t.entry_fee "
-                    "FROM arena_tournament_registrations reg "
-                    "JOIN arena_tournaments t ON reg.tournament_id = t.id "
-                    "WHERE reg.tournament_id = {} AND reg.status = 'confirmed'",
-                    tournamentId
-                );
-                
-                uint32 refundCount = 0;
-                if (result)
-                {
-                    do
-                    {
-                        auto fields = result->Fetch();
-                        uint32 playerGuid = fields[0].Get<uint32>();
-                        uint32 entryFee = fields[1].Get<uint32>();
-                        
-                        if (Player* refundPlayer = ObjectAccessor::FindPlayer(ObjectGuid::Create<HighGuid::Player>(playerGuid)))
-                        {
-                            refundPlayer->ModifyMoney(entryFee);
-                            ChatHandler(refundPlayer->GetSession()).PSendSysMessage(
-                                "|cFFFFD700Tournament cancelled! Your entry fee of %u gold has been refunded.|r", entryFee / 10000);
-                        }
-                        else
-                        {
-                            // Handle offline players - add to mail or character table
-                            CharacterDatabase.Execute(
-                                "UPDATE characters SET money = money + {} WHERE guid = {}",
-                                entryFee, playerGuid
-                            );
-                        }
-                        refundCount++;
-                        
-                    } while (result->NextRow());
-                }
-                
-                ChatHandler(player->GetSession()).PSendSysMessage(
-                    "|cFF00FF00Tournament %u cancelled successfully! Refunded %u players.|r", 
-                    tournamentId, refundCount
-                );
+                if (sTournamentSystem->CancelTournament(tournamentId))
+                    ChatHandler(player->GetSession()).PSendSysMessage("Tournament {} cancelled successfully!", tournamentId);
+                else
+                    ChatHandler(player->GetSession()).PSendSysMessage("Failed to cancel tournament {} (invalid status).", tournamentId);
                 ShowCancelTournamentMenu(player, creature);
             }
             // View participants actions (7000+ range)
@@ -840,16 +802,16 @@ void npc_1v1arena::ShowLeaderboard(Player* player, Creature* /* creature */)
         std::string className = GetClassNameById(playerClass);
         float winRate = seasonGames > 0 ? (float)seasonWins / seasonGames * 100.0f : 0.0f;
 
-        handler.PSendSysMessage("|cFF%s%u. |cFFFFFFFF%s |cFFFFD700[%u] |cFF87CEEB%u/%u |cFF90EE90%.1f%% |cFF%s%s|r",
+        handler.PSendSysMessage("|cFF{}{}. |cFFFFFFFF{} |cFFFFD700[{}] |cFF87CEEB{}/{} |cFF90EE90{:.1f}% |cFF{}{}|r",
             rank <= 3 ? "FFD700" : "C0C0C0",  // Gold for top 3, silver for others
             rank,
-            playerName.c_str(),
+            playerName,
             rating,
             seasonWins,
             seasonGames,
             winRate,
-            GetClassColorById(playerClass).c_str(),
-            className.c_str()
+            GetClassColorById(playerClass),
+            className
         );
 
         rank++;
@@ -1085,13 +1047,13 @@ void npc_1v1arena::ShowTournamentDetails(Player* player, Creature* creature, uin
     uint32 semiReward = sConfigMgr->GetOption<uint32>("Tournament.SemiFinalistRewardGold", 25);
     
     if (runnerUpReward > 0)
-        details << "\n|cFFC0C0C0Runner-up:|r |cFFFFD700" << (runnerUpReward / 100) << " gold|r";
+        details << "\n|cFFC0C0C0Runner-up:|r |cFFFFD700" << runnerUpReward << " gold|r";
     if (semiReward > 0 && maxParticipants >= 4)
-        details << "\n|cFFCD853FSemi-finalists:|r |cFFFFD700" << (semiReward / 100) << " gold|r";
+        details << "\n|cFFCD853FSemi-finalists:|r |cFFFFD700" << semiReward << " gold|r";
     
-    details << "\n|cFFFFD700========================================|r";
+    details << "\n\n|cFFFFD700========================================|r";
     
-    ChatHandler(player->GetSession()).PSendSysMessage("%s", details.str().c_str());
+    ChatHandler(player->GetSession()).PSendSysMessage("{}", details.str());
     
     // Show action buttons based on tournament status and player state
     bool isRegistered = false;
@@ -1200,7 +1162,7 @@ void npc_1v1arena::ShowTournamentBracket(Player* player, Creature* creature, uin
     
     bracket << "\n|cFFFFD700=======================================|r";
     
-    ChatHandler(player->GetSession()).PSendSysMessage("%s", bracket.str().c_str());
+    ChatHandler(player->GetSession()).PSendSysMessage("{}", bracket.str());
     SendGossipMenuFor(player, NPC_TEXT_ENTRY_1v1, creature->GetGUID());
 }
 
@@ -1236,7 +1198,7 @@ void npc_1v1arena::ShowMyTournaments(Player* player, Creature* creature)
         
         matchInfo << "\n|cFFFF4500============================================|r";
         
-        ChatHandler(player->GetSession()).PSendSysMessage("%s", matchInfo.str().c_str());
+        ChatHandler(player->GetSession()).PSendSysMessage("{}", matchInfo.str());
     }
     else
     {
@@ -1262,7 +1224,7 @@ void npc_1v1arena::ShowMyTournaments(Player* player, Creature* creature)
     
     statsInfo << "\n|cFF9370DB==========================================|r";
     
-    ChatHandler(player->GetSession()).PSendSysMessage("%s", statsInfo.str().c_str());
+    ChatHandler(player->GetSession()).PSendSysMessage("{}", statsInfo.str());
     
     SendGossipMenuFor(player, NPC_TEXT_ENTRY_1v1, creature->GetGUID());
 }
@@ -1296,7 +1258,7 @@ void npc_1v1arena::ShowTournamentStats(Player* player, Creature* creature)
         globalStats << "\n|cFFFFD700Average Participants: |cFFFFFFFF" << std::fixed << std::setprecision(1) << avgParticipants << "|r";
         globalStats << "\n|cFFFFA500=========================================|r";
         
-        ChatHandler(player->GetSession()).PSendSysMessage("%s", globalStats.str().c_str());
+        ChatHandler(player->GetSession()).PSendSysMessage("{}", globalStats.str());
     }
     
     // Show top tournament champions
@@ -1331,7 +1293,7 @@ void npc_1v1arena::ShowTournamentStats(Player* player, Creature* creature)
         
         champions << "\n|cFFFFD700=======================================|r";
         
-        ChatHandler(player->GetSession()).PSendSysMessage("%s", champions.str().c_str());
+        ChatHandler(player->GetSession()).PSendSysMessage("{}", champions.str());
     }
     
     SendGossipMenuFor(player, NPC_TEXT_ENTRY_1v1, creature->GetGUID());
@@ -1347,8 +1309,9 @@ void npc_1v1arena::ShowAdminTournamentMenu(Player* player, Creature* creature)
     AddGossipItemFor(player, GOSSIP_ICON_VENDOR, "|cFF00FF00|TInterface/ICONS/INV_Misc_Trophy_06:30:30:-20:0|t|r |cFF00FF00Create Tournament (Quick)|r", 
         GOSSIP_SENDER_MAIN, NPC_ARENA_1V1_ACTION_ADMIN_CREATE_BASIC);
     
-    AddGossipItemFor(player, GOSSIP_ICON_VENDOR, "|cFFFFD700|TInterface/ICONS/INV_Misc_Trophy_05:30:30:-20:0|t|r |cFFFFD700Create Tournament (Advanced)|r", 
-        GOSSIP_SENDER_MAIN, NPC_ARENA_1V1_ACTION_ADMIN_CREATE_ADVANCED);
+    // Advanced creation is currently disabled - coming soon
+    // AddGossipItemFor(player, GOSSIP_ICON_VENDOR, "|cFFFFD700|TInterface/ICONS/INV_Misc_Trophy_05:30:30:-20:0|t|r |cFFFFD700Create Tournament (Advanced)|r", 
+    //     GOSSIP_SENDER_MAIN, NPC_ARENA_1V1_ACTION_ADMIN_CREATE_ADVANCED);
     
     // Tournament Management
     AddGossipItemFor(player, GOSSIP_ICON_BATTLE, "|cFF32CD32|TInterface/ICONS/Achievement_Arena_2v2_5:30:30:-20:0|t|r |cFF32CD32Start Tournament|r", 
@@ -1440,16 +1403,16 @@ void npc_1v1arena::ShowBasicTournamentCreation(Player* player, Creature* creatur
     std::ostringstream info;
     info << "\n|cFFFFD700========== Quick Tournament Creation ==========|r";
     info << "\n|cFFFFD700This will create a tournament with default settings:|r";
-    info << "\n|cFF00FF00Entry Fee: |cFFFFFFFF" << (sConfigMgr->GetOption<uint32>("Tournament.DefaultEntryFee", 100) / 10000) << " gold|r";
+    info << "\n|cFF00FF00Entry Fee: |cFFFFFFFF" << (sConfigMgr->GetOption<uint32>("Tournament.DefaultEntryFee", 100)) << " gold|r";
     info << "\n|cFF00FF00Registration: |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.DefaultRegistrationHours", 24) << " hours|r";
     info << "\n|cFF00FF00Max Players: |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.DefaultMaxParticipants", 16) << "|r";
-    info << "\n|cFF00FF00Winner Prize: |cFFFFFFFF" << (sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardGold", 500) / 100) << " gold|r";
+    info << "\n|cFF00FF00Winner Prize: |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardGold", 500) << " gold|r";
     info << "\n|cFFFF6600Type tournament name in chat:|r |cFFFFFFFFExample: Arena Championship|r";
     
-    handler.PSendSysMessage("%s", info.str().c_str());
+    handler.PSendSysMessage("{}", info.str());
     
     // Store creation type in player's session for later use
-    player->GetSession()->SetInGuildInvite(true); // Using as flag for basic creation
+    g_awaitingTournamentName[player->GetGUID().GetCounter()] = true; // Using as flag for basic creation
     
     CloseGossipMenuFor(player);
 }
@@ -1474,7 +1437,7 @@ void npc_1v1arena::ShowAdvancedTournamentCreation(Player* player, Creature* crea
     info << "\n|cFFFF6600This feature will guide you through each step.|r";
     info << "\n|cFFFF0000[Advanced creation system - Coming soon!]|r";
     
-    handler.PSendSysMessage("%s", info.str().c_str());
+    handler.PSendSysMessage("{}", info.str());
     
     CloseGossipMenuFor(player);
 }
@@ -1527,7 +1490,7 @@ void npc_1v1arena::ShowStartTournamentMenu(Player* player, Creature* creature)
         
     } while (result->NextRow());
     
-    handler.PSendSysMessage("%s", info.str().c_str());
+    handler.PSendSysMessage("{}", info.str());
     SendGossipMenuFor(player, NPC_TEXT_ENTRY_1v1, creature->GetGUID());
 }
 
@@ -1575,7 +1538,7 @@ void npc_1v1arena::ShowCancelTournamentMenu(Player* player, Creature* creature)
         
     } while (result->NextRow());
     
-    handler.PSendSysMessage("%s", info.str().c_str());
+    handler.PSendSysMessage("{}", info.str());
     SendGossipMenuFor(player, NPC_TEXT_ENTRY_1v1, creature->GetGUID());
 }
 
@@ -1589,17 +1552,17 @@ void npc_1v1arena::ShowRewardSettingsMenu(Player* player, Creature* creature)
     
     std::ostringstream info;
     info << "\n|cFFFFD700========== Current Reward Settings ==========|r";
-    info << "\n|cFF00FF00Default Winner Gold:|r |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardGold", 500) << " copper|r";
+    info << "\n|cFF00FF00Default Winner Gold:|r |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardGold", 500) << " gold|r";
     info << "\n|cFF00FF00Default Winner Item:|r |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardItem", 0) << "|r";
     info << "\n|cFF00FF00Default Winner Title:|r |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerTitle", 0) << "|r";
-    info << "\n|cFFC0C0C0Runner-up Gold:|r |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.RunnerUpRewardGold", 100) << " copper|r";
-    info << "\n|cFFCD853FSemi-finalist Gold:|r |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.SemiFinalistRewardGold", 25) << " copper|r";
-    info << "\n|cFF9370DBEntry Fee Default:|r |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.DefaultEntryFee", 100) << " copper|r";
+    info << "\n|cFFC0C0C0Runner-up Gold:|r |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.RunnerUpRewardGold", 100) << " gold|r";
+    info << "\n|cFFCD853FSemi-finalist Gold:|r |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.SemiFinalistRewardGold", 25) << " gold|r";
+    info << "\n|cFF9370DBEntry Fee Default:|r |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.DefaultEntryFee", 100) << " gold|r";
     info << "\n|cFF20B2AAMax Participants:|r |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.DefaultMaxParticipants", 16) << "|r";
     info << "\n|cFFDC143CRegistration Hours:|r |cFFFFFFFF" << sConfigMgr->GetOption<uint32>("Tournament.DefaultRegistrationHours", 24) << "|r";
     info << "\n\n|cFFFF6600Use tournament config commands to modify these settings.|r";
     
-    handler.PSendSysMessage("%s", info.str().c_str());
+    handler.PSendSysMessage("{}", info.str());
     
     CloseGossipMenuFor(player);
 }
@@ -1623,7 +1586,7 @@ void npc_1v1arena::ShowGeneralSettingsMenu(Player* player, Creature* creature)
     info << "\n\n|cFFFF6600Use '.tournament config' command to view all settings.|r";
     info << "\n|cFFFF6600Modify settings in 1v1arena.conf file.|r";
     
-    handler.PSendSysMessage("%s", info.str().c_str());
+    handler.PSendSysMessage("{}", info.str());
     
     CloseGossipMenuFor(player);
 }
@@ -1692,7 +1655,7 @@ void npc_1v1arena::ShowAllTournamentsAdmin(Player* player, Creature* creature)
         
     } while (result->NextRow());
     
-    handler.PSendSysMessage("%s", info.str().c_str());
+    handler.PSendSysMessage("{}", info.str());
     
     CloseGossipMenuFor(player);
 }
@@ -1725,7 +1688,7 @@ void npc_1v1arena::CreateTournamentFromMenu(Player* player, const std::string& n
         if (winnerTitle > 0)
             success << "\n|cFFFFD700Winner Title:|r |cFFFF6600Title ID " << winnerTitle << "|r";
         
-        handler.PSendSysMessage("%s", success.str().c_str());
+        handler.PSendSysMessage("{}", success.str());
         
         // Announce to server
         std::ostringstream announce;
@@ -1818,7 +1781,7 @@ void npc_1v1arena::ShowTournamentParticipants(Player* player, Creature* creature
     
     participants << "\n|cFFFFD700============================================|r";
     
-    handler.PSendSysMessage("%s", participants.str().c_str());
+    handler.PSendSysMessage("{}", participants.str());
     
     CloseGossipMenuFor(player);
 }

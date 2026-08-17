@@ -41,10 +41,15 @@ uint32 TournamentSystem::CreateTournament(const std::string& name, const std::st
     if (winnerTitle == 0)
         winnerTitle = sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerTitle", 0);
     
+    std::string safeName = name;
+    std::string safeDescription = description;
+    CharacterDatabase.EscapeString(safeName);
+    CharacterDatabase.EscapeString(safeDescription);
+    
     CharacterDatabase.Execute(
         "INSERT INTO arena_tournaments (name, description, entry_fee, registration_start, registration_end, max_participants, created_by, winner_reward_gold, winner_reward_item, winner_title) "
         "VALUES ('{}', '{}', {}, FROM_UNIXTIME({}), FROM_UNIXTIME({}), {}, {}, {}, {}, {})",
-        name, description, entryFee, now, registrationEnd, maxParticipants, createdBy, winnerRewardGold, winnerRewardItem, winnerTitle
+        safeName, safeDescription, entryFee, now, registrationEnd, maxParticipants, createdBy, winnerRewardGold, winnerRewardItem, winnerTitle
     );
     
     QueryResult result = CharacterDatabase.Query("SELECT LAST_INSERT_ID()");
@@ -133,7 +138,7 @@ bool TournamentSystem::RegisterPlayer(uint32 tournamentId, Player* player)
         tournamentId
     );
     
-    ChatHandler(player->GetSession()).PSendSysMessage("|cff00FF00Successfully registered for tournament! Entry fee of %u gold has been deducted.|r", entryFee / 10000);
+    ChatHandler(player->GetSession()).PSendSysMessage("|cff00FF00Successfully registered for tournament! Entry fee of {} gold has been deducted.|r", entryFee / 10000);
     
     LOG_INFO("tournament", "Player {} registered for tournament {}", player->GetName(), tournamentId);
     
@@ -691,22 +696,50 @@ void TournamentSystem::GiveRewards(uint32 playerGuid, uint32 goldAmount, uint32 
         {
             player->ModifyMoney(goldAmount);
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffFFD700You have received %u gold as tournament reward!|r", goldAmount / 10000);
+                "|cffFFD700You have received {} gold as tournament reward!|r", goldAmount / 10000);
         }
         
         if (itemId > 0)
         {
-            // Add item logic here
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cff00FF00You have received a special tournament item!|r");
+            ItemPosCountVec dest;
+            if (player->CanStoreNewItem(NULL_BAG, NULL_SLOT, dest, itemId, 1) == EQUIP_ERR_OK)
+            {
+                Item* item = player->StoreNewItem(dest, itemId, true);
+                if (item)
+                    player->SendNewItem(item, 1, true, false);
+                ChatHandler(player->GetSession()).PSendSysMessage(
+                    "|cff00FF00You have received a special tournament item!|r");
+            }
+            else
+            {
+                // Inventory full, send via mail
+                MailDraft draft("Tournament Reward", "Congratulations! Here is your tournament reward item.");
+                draft.AddItem(itemId, 1);
+                draft.SendMailTo(player, MAIL_SENDER_ARENA, MAIL_STATIONERY_GM);
+                ChatHandler(player->GetSession()).PSendSysMessage(
+                    "|cff00FF00Tournament item sent via mail (inventory was full).|r");
+            }
         }
         
         if (titleId > 0)
         {
-            // Add title logic here
-            ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffFF6600You have been granted a tournament title!|r");
+            if (CharTitlesEntry const* title = sCharTitlesStore.LookupEntry(titleId))
+            {
+                player->SetTitle(title);
+                ChatHandler(player->GetSession()).PSendSysMessage(
+                    "|cffFF6600You have been granted a tournament title!|r");
+            }
         }
+    }
+    else
+    {
+        // Player is offline, add gold directly to database
+        if (goldAmount > 0)
+        {
+            CharacterDatabase.Execute("UPDATE characters SET money = money + {} WHERE guid = {}", goldAmount, playerGuid);
+            LOG_INFO("tournament", "Added {} gold to offline player {}", goldAmount / 10000, playerGuid);
+        }
+        // Items and titles will be given when player logs in (would need additional tracking)
     }
 }
 
@@ -973,7 +1006,7 @@ bool TournamentSystem::PayEntryFee(uint32 tournamentId, Player* player)
     // Check if player has enough gold
     if (!HasEnoughGold(player, entryFee))
     {
-        ChatHandler(player->GetSession()).PSendSysMessage("You need %u gold to pay the entry fee!", entryFee / 10000);
+        ChatHandler(player->GetSession()).PSendSysMessage("You need {} gold to pay the entry fee!", entryFee / 10000);
         return false;
     }
     
@@ -986,7 +1019,7 @@ bool TournamentSystem::PayEntryFee(uint32 tournamentId, Player* player)
         tournamentId, playerGuid
     );
     
-    ChatHandler(player->GetSession()).PSendSysMessage("|cff00FF00Entry fee of %u gold has been paid.|r", entryFee / 10000);
+    ChatHandler(player->GetSession()).PSendSysMessage("|cff00FF00Entry fee of {} gold has been paid.|r", entryFee / 10000);
     LOG_INFO("tournament", "Player {} paid entry fee for tournament {}", player->GetName(), tournamentId);
     
     return true;
@@ -1458,9 +1491,12 @@ void TournamentSystem::OnBattlegroundEnd(uint32 battlegroundId, uint32 winnerGui
 
 void TournamentSystem::LogTournamentEvent(uint32 tournamentId, const std::string& event)
 {
+    std::string safeEvent = event;
+    CharacterDatabase.EscapeString(safeEvent);
+    
     CharacterDatabase.Execute(
         "INSERT INTO arena_tournament_logs (tournament_id, event, event_time) VALUES ({}, '{}', NOW())",
-        tournamentId, event
+        tournamentId, safeEvent
     );
     
     LOG_INFO("tournament", "Tournament {}: {}", tournamentId, event);
