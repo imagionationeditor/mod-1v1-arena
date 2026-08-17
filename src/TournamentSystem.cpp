@@ -12,6 +12,7 @@
 #include "ObjectGuid.h"
 #include "ScriptMgr.h"
 #include "Config.h"
+#include "Util.h" // for Acore::StringFormat
 #include <algorithm>
 #include <random>
 #include <sstream>
@@ -72,7 +73,7 @@ bool TournamentSystem::RegisterPlayer(uint32 tournamentId, Player* player)
     std::string errorMsg;
     if (!CanPlayerRegister(tournamentId, player, errorMsg))
     {
-        ChatHandler(player->GetSession()).PSendSysMessage("Registration failed: %s", errorMsg.c_str());
+        ChatHandler(player->GetSession()).PSendSysMessage("Registration failed: {}", errorMsg);
         return false;
     }
     
@@ -105,14 +106,14 @@ bool TournamentSystem::RegisterPlayer(uint32 tournamentId, Player* player)
     // Check if tournament is full
     if (currentParticipants >= maxParticipants)
     {
-        ChatHandler(player->GetSession()).PSendSysMessage("Tournament is full! Maximum participants: %u", maxParticipants);
+        ChatHandler(player->GetSession()).PSendSysMessage("Tournament is full! Maximum participants: {}", maxParticipants);
         return false;
     }
     
     // Check if player has enough gold
     if (!HasEnoughGold(player, entryFee))
     {
-        ChatHandler(player->GetSession()).PSendSysMessage("You need %u gold to register for this tournament!", entryFee / 10000);
+        ChatHandler(player->GetSession()).PSendSysMessage("You need {} gold to register for this tournament!", entryFee / 10000);
         return false;
     }
     
