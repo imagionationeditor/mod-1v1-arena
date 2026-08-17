@@ -83,14 +83,24 @@ public:
             return true;
         }
 
-        std::string name = tokens[0];
-        std::string description = tokens[1];
-        uint32 entryFee = tokens.size() > 2 ? std::stoul(tokens[2]) * 10000 : sConfigMgr->GetOption<uint32>("Tournament.DefaultEntryFee", 50) * 10000;
-        uint32 regHours = tokens.size() > 3 ? std::stoul(tokens[3]) : sConfigMgr->GetOption<uint32>("Tournament.DefaultRegistrationDuration", 48);
-        uint32 maxParticipants = tokens.size() > 4 ? std::stoul(tokens[4]) : sConfigMgr->GetOption<uint32>("Tournament.DefaultMaxParticipants", 64);
-        uint32 winnerReward = tokens.size() > 5 ? std::stoul(tokens[5]) * 10000 : sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardGold", 500) * 10000;
-        uint32 itemReward = tokens.size() > 6 ? std::stoul(tokens[6]) : sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardItem", 0);
-        uint32 titleReward = tokens.size() > 7 ? std::stoul(tokens[7]) : sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerTitle", 0);
+    uint32 entryFee;
+    uint32 regHours;
+    uint32 maxParticipants;
+    uint32 winnerReward;
+    uint32 itemReward;
+    uint32 titleReward;
+    
+    try {
+        entryFee = tokens.size() > 2 ? std::stoul(tokens[2]) * 10000 : sConfigMgr->GetOption<uint32>("Tournament.DefaultEntryFee", 50) * 10000;
+        regHours = tokens.size() > 3 ? std::stoul(tokens[3]) : sConfigMgr->GetOption<uint32>("Tournament.DefaultRegistrationDuration", 48);
+        maxParticipants = tokens.size() > 4 ? std::stoul(tokens[4]) : sConfigMgr->GetOption<uint32>("Tournament.DefaultMaxParticipants", 64);
+        winnerReward = tokens.size() > 5 ? std::stoul(tokens[5]) * 10000 : sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardGold", 500) * 10000;
+        itemReward = tokens.size() > 6 ? std::stoul(tokens[6]) : sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardItem", 0);
+        titleReward = tokens.size() > 7 ? std::stoul(tokens[7]) : sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerTitle", 0);
+    } catch (const std::exception&) {
+        handler->PSendSysMessage("Error: invalid numeric argument.");
+        return true;
+    }
 
         uint32 tournamentId = sTournamentSystem->CreateTournament(
             name, description, entryFee, regHours, maxParticipants, 
@@ -267,9 +277,18 @@ public:
             while (ss >> token)
                 tokens.push_back(token);
 
-            uint32 goldAmount = tokens.size() > 1 ? std::stoul(tokens[1]) * 10000 : 100 * 10000; // Default 100 gold
-            uint32 itemId = tokens.size() > 2 ? std::stoul(tokens[2]) : 0;
-            uint32 titleId = tokens.size() > 3 ? std::stoul(tokens[3]) : 0;
+    uint32 goldAmount;
+    uint32 itemId;
+    uint32 titleId;
+    
+    try {
+        goldAmount = tokens.size() > 1 ? std::stoul(tokens[1]) * 10000 : 100 * 10000; // Default 100 gold
+        itemId = tokens.size() > 2 ? std::stoul(tokens[2]) : 0;
+        titleId = tokens.size() > 3 ? std::stoul(tokens[3]) : 0;
+    } catch (const std::exception&) {
+        handler->PSendSysMessage("Error: invalid numeric argument.");
+        return true;
+    }
 
             Player* player = handler->GetSession()->GetPlayer();
             

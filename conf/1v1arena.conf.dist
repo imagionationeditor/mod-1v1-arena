@@ -30,7 +30,7 @@ Arena1v1.MinLevel = 80
 #        Description: Costs for create an arena team
 #        Default:     400000 - (40 gold)
 
-Arena1v1.Costs = 40000
+Arena1v1.Costs = 400000
 
 #
 #    Arena1v1.VendorRating
