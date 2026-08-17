@@ -1,4 +1,6 @@
 #include "TournamentSystem.h"
+#include "TournamentCurrency.h"
+#include "TournamentRepository.h"
 #include "Player.h"
 #include "DatabaseEnv.h"
 #include "Log.h"
@@ -35,7 +37,7 @@ uint32 TournamentSystem::CreateTournament(const std::string& name, const std::st
     
     // Use config defaults if not specified
     if (winnerRewardGold == 0)
-        winnerRewardGold = sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardGold", 500) * 10000;
+        winnerRewardGold = TournamentCurrency::ToCopper(sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardGold", 500));
     if (winnerRewardItem == 0)
         winnerRewardItem = sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardItem", 0);
     if (winnerTitle == 0)
@@ -43,25 +45,15 @@ uint32 TournamentSystem::CreateTournament(const std::string& name, const std::st
     
     std::string safeName = name;
     std::string safeDescription = description;
-    CharacterDatabase.EscapeString(safeName);
-    CharacterDatabase.EscapeString(safeDescription);
+    sTournamentRepo->EscapeString(safeName);
+    sTournamentRepo->EscapeString(safeDescription);
     
-    CharacterDatabase.Execute(
-        "INSERT INTO arena_tournaments (name, description, entry_fee, registration_start, registration_end, max_participants, created_by, winner_reward_gold, winner_reward_item, winner_title) "
-        "VALUES ('{}', '{}', {}, FROM_UNIXTIME({}), FROM_UNIXTIME({}), {}, {}, {}, {}, {})",
-        safeName, safeDescription, entryFee, now, registrationEnd, maxParticipants, createdBy, winnerRewardGold, winnerRewardItem, winnerTitle
-    );
-    
-    QueryResult result = CharacterDatabase.Query("SELECT LAST_INSERT_ID()");
-    if (!result)
-        return 0;
-        
-    uint32 tournamentId = (*result)[0].Get<uint32>();
+    uint32 tournamentId = sTournamentRepo->InsertTournament(safeName, safeDescription, entryFee, now, registrationEnd, maxParticipants, createdBy, winnerRewardGold, winnerRewardItem, winnerTitle);
     
     // Announce tournament creation
     std::ostringstream announce;
     announce << "|cffFFD700[Tournament]|r New tournament '|cff00FF00" << name 
-             << "|r' has been created! Entry fee: |cffFFD700" << (entryFee / 10000) 
+             << "|r' has been created! Entry fee: |cffFFD700" << TournamentCurrency::ToGold(entryFee) 
              << "|r gold. Registration ends in |cff00FFFF" << registrationDurationHours << "|r hours!";
     SendTournamentAnnouncement(announce.str());
     
@@ -83,62 +75,41 @@ bool TournamentSystem::RegisterPlayer(uint32 tournamentId, Player* player)
     }
     
     // Check if player already registered
-    QueryResult checkResult = CharacterDatabase.Query(
-        "SELECT id FROM arena_tournament_registrations WHERE tournament_id = {} AND player_guid = {}",
-        tournamentId, player->GetGUID().GetCounter()
-    );
-    
-    if (checkResult)
+    if (sTournamentRepo->IsPlayerRegistered(tournamentId, player->GetGUID().GetCounter()))
     {
         ChatHandler(player->GetSession()).PSendSysMessage("You are already registered for this tournament!");
         return false;
     }
     
     // Get tournament info for entry fee
-    QueryResult tournamentResult = CharacterDatabase.Query(
-        "SELECT entry_fee, current_participants, max_participants FROM arena_tournaments WHERE id = {}",
-        tournamentId
-    );
-    
-    if (!tournamentResult)
+    TournamentInfo info = sTournamentRepo->GetTournamentInfo(tournamentId);
+    if (info.id == 0)
         return false;
-        
-    auto fields = tournamentResult->Fetch();
-    uint32 entryFee = fields[0].Get<uint32>();
-    uint32 currentParticipants = fields[1].Get<uint32>();
-    uint32 maxParticipants = fields[2].Get<uint32>();
     
     // Check if tournament is full
-    if (currentParticipants >= maxParticipants)
+    if (info.currentParticipants >= info.maxParticipants)
     {
-        ChatHandler(player->GetSession()).PSendSysMessage("Tournament is full! Maximum participants: {}", maxParticipants);
+        ChatHandler(player->GetSession()).PSendSysMessage("Tournament is full! Maximum participants: {}", info.maxParticipants);
         return false;
     }
     
     // Check if player has enough gold
-    if (!HasEnoughGold(player, entryFee))
+    if (!HasEnoughGold(player, info.entryFee))
     {
-        ChatHandler(player->GetSession()).PSendSysMessage("You need {} gold to register for this tournament!", entryFee / 10000);
+        ChatHandler(player->GetSession()).PSendSysMessage("You need {} gold to register for this tournament!", TournamentCurrency::ToGold(info.entryFee));
         return false;
     }
     
     // Deduct entry fee
-    player->ModifyMoney(-int32(entryFee));
+    player->ModifyMoney(-int32(info.entryFee));
     
     // Register player
-    CharacterDatabase.Execute(
-        "INSERT INTO arena_tournament_registrations (tournament_id, player_guid, character_name, entry_fee_paid, status) "
-        "VALUES ({}, {}, '{}', 1, 'confirmed')",
-        tournamentId, player->GetGUID().GetCounter(), player->GetName()
-    );
+    sTournamentRepo->InsertRegistration(tournamentId, player->GetGUID().GetCounter(), player->GetName());
     
     // Update participant count
-    CharacterDatabase.Execute(
-        "UPDATE arena_tournaments SET current_participants = current_participants + 1 WHERE id = {}",
-        tournamentId
-    );
+    sTournamentRepo->IncrementParticipantCount(tournamentId);
     
-    ChatHandler(player->GetSession()).PSendSysMessage("|cff00FF00Successfully registered for tournament! Entry fee of {} gold has been deducted.|r", entryFee / 10000);
+    ChatHandler(player->GetSession()).PSendSysMessage("|cff00FF00Successfully registered for tournament! Entry fee of {} gold has been deducted.|r", TournamentCurrency::ToGold(info.entryFee));
     
     LOG_INFO("tournament", "Player {} registered for tournament {}", player->GetName(), tournamentId);
     
@@ -148,36 +119,24 @@ bool TournamentSystem::RegisterPlayer(uint32 tournamentId, Player* player)
 bool TournamentSystem::StartTournament(uint32 tournamentId)
 {
     // Check tournament exists and is in registration phase
-    QueryResult result = CharacterDatabase.Query(
-        "SELECT name, status, current_participants FROM arena_tournaments WHERE id = {}",
-        tournamentId
-    );
-    
-    if (!result)
+    TournamentInfo info = sTournamentRepo->GetTournamentInfo(tournamentId);
+    if (info.id == 0)
         return false;
-        
-    auto fields = result->Fetch();
-    std::string name = fields[0].Get<std::string>();
-    std::string status = fields[1].Get<std::string>();
-    uint32 participants = fields[2].Get<uint32>();
     
-    if (status != "registration" && status != "ready")
+    if (info.status != TOURNAMENT_STATUS_REGISTRATION && info.status != TOURNAMENT_STATUS_READY)
     {
-        LOG_ERROR("tournament", "Cannot start tournament {} - invalid status: {}", tournamentId, status);
+        LOG_ERROR("tournament", "Cannot start tournament {} - invalid status: {}", tournamentId, static_cast<int>(info.status));
         return false;
     }
     
-    if (participants < 2)
+    if (info.currentParticipants < 2)
     {
-        LOG_ERROR("tournament", "Cannot start tournament {} - not enough participants: {}", tournamentId, participants);
+        LOG_ERROR("tournament", "Cannot start tournament {} - not enough participants: {}", tournamentId, info.currentParticipants);
         return false;
     }
     
     // Update tournament status
-    CharacterDatabase.Execute(
-        "UPDATE arena_tournaments SET status = 'active', tournament_start = NOW() WHERE id = {}",
-        tournamentId
-    );
+    sTournamentRepo->SetTournamentStatus(tournamentId, "active");
     
     // Generate bracket
     if (!GenerateBracket(tournamentId))
@@ -188,11 +147,11 @@ bool TournamentSystem::StartTournament(uint32 tournamentId)
     
     // Announce tournament start
     std::ostringstream announce;
-    announce << "|cffFFD700[Tournament]|r Tournament '|cff00FF00" << name 
-             << "|r' has started with |cffFFD700" << participants << "|r participants! Good luck!";
+    announce << "|cffFFD700[Tournament]|r Tournament '|cff00FF00" << info.name 
+             << "|r' has started with |cffFFD700" << info.currentParticipants << "|r participants! Good luck!";
     SendTournamentAnnouncement(announce.str());
     
-    LOG_INFO("tournament", "Tournament '{}' (ID: {}) started with {} participants", name, tournamentId, participants);
+    LOG_INFO("tournament", "Tournament '{}' (ID: {}) started with {} participants", info.name, tournamentId, info.currentParticipants);
     
     return true;
 }
@@ -200,21 +159,7 @@ bool TournamentSystem::StartTournament(uint32 tournamentId)
 bool TournamentSystem::GenerateBracket(uint32 tournamentId)
 {
     // Get all confirmed registrations
-    QueryResult result = CharacterDatabase.Query(
-        "SELECT player_guid, character_name FROM arena_tournament_registrations "
-        "WHERE tournament_id = {} AND status = 'confirmed' ORDER BY registration_time",
-        tournamentId
-    );
-    
-    if (!result)
-        return false;
-        
-    std::vector<std::pair<uint32, std::string>> participants;
-    do
-    {
-        auto fields = result->Fetch();
-        participants.emplace_back(fields[0].Get<uint32>(), fields[1].Get<std::string>());
-    } while (result->NextRow());
+    std::vector<std::pair<uint32, std::string>> participants = sTournamentRepo->GetConfirmedParticipants(tournamentId);
     
     if (participants.size() < 2)
         return false;
@@ -235,17 +180,9 @@ bool TournamentSystem::GenerateBracket(uint32 tournamentId)
     uint32 roundsNeeded = CalculateRoundsNeeded(participants.size());
     
     // Create first round
-    CharacterDatabase.Execute(
-        "INSERT INTO arena_tournament_rounds (tournament_id, round_number, round_name, status) "
-        "VALUES ({}, 1, '{}', 'active')",
-        tournamentId, GenerateRoundName(participants.size(), 1)
-    );
-    
-    QueryResult roundResult = CharacterDatabase.Query("SELECT LAST_INSERT_ID()");
-    if (!roundResult)
+    uint32 roundId = sTournamentRepo->InsertRound(tournamentId, 1, GenerateRoundName(participants.size(), 1));
+    if (roundId == 0)
         return false;
-        
-    uint32 roundId = (*roundResult)[0].Get<uint32>();
     
     // Create matches for first round
     uint32 matchNumber = 1;
@@ -254,21 +191,14 @@ bool TournamentSystem::GenerateBracket(uint32 tournamentId)
         if (i + 1 < playerGuids.size())
         {
             // Normal match
-            CharacterDatabase.Execute(
-                "INSERT INTO arena_tournament_matches (tournament_id, round_id, match_number, player1_guid, player2_guid, player1_name, player2_name, status) "
-                "VALUES ({}, {}, {}, {}, {}, '{}', '{}', 'pending')",
-                tournamentId, roundId, matchNumber, playerGuids[i], playerGuids[i + 1],
-                playerNames[playerGuids[i]], playerNames[playerGuids[i + 1]]
-            );
+            sTournamentRepo->InsertMatch(tournamentId, roundId, matchNumber, playerGuids[i], playerGuids[i + 1],
+                playerNames[playerGuids[i]], playerNames[playerGuids[i + 1]]);
         }
         else
         {
             // Bye (automatic advancement)
-            CharacterDatabase.Execute(
-                "INSERT INTO arena_tournament_matches (tournament_id, round_id, match_number, player1_guid, player2_guid, player1_name, player2_name, winner_guid, status) "
-                "VALUES ({}, {}, {}, {}, 0, '{}', 'BYE', {}, 'completed')",
-                tournamentId, roundId, matchNumber, playerGuids[i], playerNames[playerGuids[i]], playerGuids[i]
-            );
+            sTournamentRepo->InsertMatch(tournamentId, roundId, matchNumber, playerGuids[i], 0,
+                playerNames[playerGuids[i]], "", playerGuids[i]);
         }
         matchNumber++;
     }
@@ -482,7 +412,7 @@ bool TournamentSystem::FinishTournament(uint32 tournamentId, uint32 winnerGuid)
         runnerUpName = (finalsFields[4].Get<uint32>() == player1) ? finalsFields[3].Get<std::string>() : finalsFields[2].Get<std::string>();
         
         // Give runner-up reward (2nd place)
-        uint32 runnerUpReward = sConfigMgr->GetOption<uint32>("Tournament.RunnerUpRewardGold", 100) * 10000;
+        uint32 runnerUpReward = TournamentCurrency::ToCopper(sConfigMgr->GetOption<uint32>("Tournament.RunnerUpRewardGold", 100));
         GiveRewards(runnerUpGuid, runnerUpReward);
         UpdatePlayerStats(runnerUpGuid, false, runnerUpReward);
     }
@@ -498,7 +428,7 @@ bool TournamentSystem::FinishTournament(uint32 tournamentId, uint32 winnerGuid)
     
     if (semiResult)
     {
-        uint32 semiReward = sConfigMgr->GetOption<uint32>("Tournament.SemiFinalistRewardGold", 25) * 10000;
+        uint32 semiReward = TournamentCurrency::ToCopper(sConfigMgr->GetOption<uint32>("Tournament.SemiFinalistRewardGold", 25));
         do
         {
             auto semiFields = semiResult->Fetch();
@@ -533,7 +463,7 @@ bool TournamentSystem::FinishTournament(uint32 tournamentId, uint32 winnerGuid)
     rewardsJson << "{\"winner_gold\":" << goldReward;
     if (itemReward > 0) rewardsJson << ",\"item\":" << itemReward;
     if (titleReward > 0) rewardsJson << ",\"title\":" << titleReward;
-    if (runnerUpGuid > 0) rewardsJson << ",\"runner_up_gold\":" << (sConfigMgr->GetOption<uint32>("Tournament.RunnerUpRewardGold", 100) * 10000);
+    if (runnerUpGuid > 0) rewardsJson << ",\"runner_up_gold\":" << TournamentCurrency::ToCopper(sConfigMgr->GetOption<uint32>("Tournament.RunnerUpRewardGold", 100));
     rewardsJson << "}";
     
     CharacterDatabase.Execute(
@@ -548,7 +478,7 @@ bool TournamentSystem::FinishTournament(uint32 tournamentId, uint32 winnerGuid)
              << "|r' has ended! |cffFFD700" << winnerName << "|r is the champion!";
     if (!runnerUpName.empty())
         announce << " Runner-up: |cffC0C0C0" << runnerUpName << "|r";
-    announce << " Winner receives |cffFFD700" << (goldReward / 10000) << "|r gold!";
+    announce << " Winner receives |cffFFD700" << TournamentCurrency::ToGold(goldReward) << "|r gold!";
     
     if (sConfigMgr->GetOption<bool>("Tournament.EnableServerAnnouncements", true))
         SendTournamentAnnouncement(announce.str());
@@ -696,7 +626,7 @@ void TournamentSystem::GiveRewards(uint32 playerGuid, uint32 goldAmount, uint32 
         {
             player->ModifyMoney(goldAmount);
             ChatHandler(player->GetSession()).PSendSysMessage(
-                "|cffFFD700You have received {} gold as tournament reward!|r", goldAmount / 10000);
+                "|cffFFD700You have received {} gold as tournament reward!|r", TournamentCurrency::ToGold(goldAmount));
         }
         
         if (itemId > 0)
@@ -737,7 +667,7 @@ void TournamentSystem::GiveRewards(uint32 playerGuid, uint32 goldAmount, uint32 
         if (goldAmount > 0)
         {
             CharacterDatabase.Execute("UPDATE characters SET money = money + {} WHERE guid = {}", goldAmount, playerGuid);
-            LOG_INFO("tournament", "Added {} gold to offline player {}", goldAmount / 10000, playerGuid);
+            LOG_INFO("tournament", "Added {} gold to offline player {}", TournamentCurrency::ToGold(goldAmount), playerGuid);
         }
         // Items and titles will be given when player logs in (would need additional tracking)
     }
@@ -1006,7 +936,7 @@ bool TournamentSystem::PayEntryFee(uint32 tournamentId, Player* player)
     // Check if player has enough gold
     if (!HasEnoughGold(player, entryFee))
     {
-        ChatHandler(player->GetSession()).PSendSysMessage("You need {} gold to pay the entry fee!", entryFee / 10000);
+        ChatHandler(player->GetSession()).PSendSysMessage("You need {} gold to pay the entry fee!", TournamentCurrency::ToGold(entryFee));
         return false;
     }
     
@@ -1019,7 +949,7 @@ bool TournamentSystem::PayEntryFee(uint32 tournamentId, Player* player)
         tournamentId, playerGuid
     );
     
-    ChatHandler(player->GetSession()).PSendSysMessage("|cff00FF00Entry fee of {} gold has been paid.|r", entryFee / 10000);
+    ChatHandler(player->GetSession()).PSendSysMessage("|cff00FF00Entry fee of {} gold has been paid.|r", TournamentCurrency::ToGold(entryFee));
     LOG_INFO("tournament", "Player {} paid entry fee for tournament {}", player->GetName(), tournamentId);
     
     return true;
@@ -1492,12 +1422,9 @@ void TournamentSystem::OnBattlegroundEnd(uint32 battlegroundId, uint32 winnerGui
 void TournamentSystem::LogTournamentEvent(uint32 tournamentId, const std::string& event)
 {
     std::string safeEvent = event;
-    CharacterDatabase.EscapeString(safeEvent);
+    sTournamentRepo->EscapeString(safeEvent);
     
-    CharacterDatabase.Execute(
-        "INSERT INTO arena_tournament_logs (tournament_id, event, event_time) VALUES ({}, '{}', NOW())",
-        tournamentId, safeEvent
-    );
+    sTournamentRepo->InsertLog(tournamentId, safeEvent);
     
     LOG_INFO("tournament", "Tournament {}: {}", tournamentId, event);
 }

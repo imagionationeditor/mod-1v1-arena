@@ -3,6 +3,7 @@
 #include "Player.h"
 #include "TournamentSystem.h"
 #include "Config.h"
+#include "TournamentCurrency.h"
 #include <sstream>
 
 using namespace Acore::ChatCommands;
@@ -91,10 +92,12 @@ public:
     uint32 titleReward;
     
     try {
-        entryFee = tokens.size() > 2 ? std::stoul(tokens[2]) * 10000 : sConfigMgr->GetOption<uint32>("Tournament.DefaultEntryFee", 50) * 10000;
+        uint32 baseEntryFee = tokens.size() > 2 ? std::stoul(tokens[2]) : sConfigMgr->GetOption<uint32>("Tournament.DefaultEntryFee", 50);
+        entryFee = TournamentCurrency::ToCopper(baseEntryFee);
         regHours = tokens.size() > 3 ? std::stoul(tokens[3]) : sConfigMgr->GetOption<uint32>("Tournament.DefaultRegistrationDuration", 48);
         maxParticipants = tokens.size() > 4 ? std::stoul(tokens[4]) : sConfigMgr->GetOption<uint32>("Tournament.DefaultMaxParticipants", 64);
-        winnerReward = tokens.size() > 5 ? std::stoul(tokens[5]) * 10000 : sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardGold", 500) * 10000;
+        uint32 baseWinnerReward = tokens.size() > 5 ? std::stoul(tokens[5]) : sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardGold", 500);
+        winnerReward = TournamentCurrency::ToCopper(baseWinnerReward);
         itemReward = tokens.size() > 6 ? std::stoul(tokens[6]) : sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardItem", 0);
         titleReward = tokens.size() > 7 ? std::stoul(tokens[7]) : sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerTitle", 0);
     } catch (const std::exception&) {
@@ -112,10 +115,10 @@ public:
         {
             handler->PSendSysMessage("Tournament created successfully! ID: {}", tournamentId);
             handler->PSendSysMessage("Name: {}", name);
-            handler->PSendSysMessage("Entry Fee: {} gold", entryFee / 10000);
+            handler->PSendSysMessage("Entry Fee: {} gold", TournamentCurrency::ToGold(entryFee));
             handler->PSendSysMessage("Registration Period: {} hours", regHours);
             handler->PSendSysMessage("Max Participants: {}", maxParticipants);
-            handler->PSendSysMessage("Winner Reward: {} gold", winnerReward / 10000);
+            handler->PSendSysMessage("Winner Reward: {} gold", TournamentCurrency::ToGold(winnerReward));
             if (itemReward > 0)
                 handler->PSendSysMessage("Winner Item: ID {}", itemReward);
             if (titleReward > 0)
@@ -231,10 +234,10 @@ public:
         handler->PSendSysMessage("ID: {}", info.id);
         handler->PSendSysMessage("Name: {}", info.name);
         handler->PSendSysMessage("Description: {}", info.description);
-        handler->PSendSysMessage("Entry Fee: {} gold", info.entryFee / 10000);
+        handler->PSendSysMessage("Entry Fee: {} gold", TournamentCurrency::ToGold(info.entryFee));
         handler->PSendSysMessage("Participants: {}/{}", info.currentParticipants, info.maxParticipants);
         handler->PSendSysMessage("Status: {}", sTournamentSystem->GetTournamentStatusString(info.status));
-        handler->PSendSysMessage("Winner Reward: {} gold", info.winnerRewardGold / 10000);
+        handler->PSendSysMessage("Winner Reward: {} gold", TournamentCurrency::ToGold(info.winnerRewardGold));
 
         return true;
     }
@@ -282,7 +285,8 @@ public:
     uint32 titleId;
     
     try {
-        goldAmount = tokens.size() > 1 ? std::stoul(tokens[1]) * 10000 : 100 * 10000; // Default 100 gold
+        uint32 baseGoldAmount = tokens.size() > 1 ? std::stoul(tokens[1]) : 100; // Default 100 gold
+        goldAmount = TournamentCurrency::ToCopper(baseGoldAmount);
         itemId = tokens.size() > 2 ? std::stoul(tokens[2]) : 0;
         titleId = tokens.size() > 3 ? std::stoul(tokens[3]) : 0;
     } catch (const std::exception&) {
@@ -296,7 +300,7 @@ public:
             if (goldAmount > 0)
             {
                 player->ModifyMoney(goldAmount);
-                handler->PSendSysMessage("Added {} gold to your character", goldAmount / 10000);
+                handler->PSendSysMessage("Added {} gold to your character", TournamentCurrency::ToGold(goldAmount));
             }
             
             // Give item (basic implementation)
