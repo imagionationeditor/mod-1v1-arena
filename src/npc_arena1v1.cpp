@@ -86,6 +86,11 @@ enum npcActions {
     NPC_ARENA_1V1_ACTION_TOURNAMENT_DETAILS_BASE = 10000,
     NPC_ARENA_1V1_ACTION_TOURNAMENT_REGISTER_BASE = 20000,
     NPC_ARENA_1V1_ACTION_TOURNAMENT_BRACKET_BASE = 30000,
+    
+    // Admin Tournament Management Actions (larger gaps to prevent collision)
+    NPC_ARENA_1V1_ACTION_ADMIN_START_BASE = 40000,
+    NPC_ARENA_1V1_ACTION_ADMIN_CANCEL_BASE = 50000,
+    NPC_ARENA_1V1_ACTION_ADMIN_PARTICIPANTS_BASE = 60000,
 };
 
 
@@ -568,10 +573,10 @@ bool npc_1v1arena::OnGossipSelect(Player* player, Creature* creature, uint32 /*s
                 uint32 tournamentId = action - NPC_ARENA_1V1_ACTION_TOURNAMENT_BRACKET_BASE;
                 ShowTournamentBracket(player, creature, tournamentId);
             }
-            // Admin tournament start actions (5000+ range)
-            else if (action >= 5000 && action < 6000 && IsPlayerAdmin(player))
+            // Admin tournament start actions (40000+ range)
+            else if (action >= NPC_ARENA_1V1_ACTION_ADMIN_START_BASE && action < NPC_ARENA_1V1_ACTION_ADMIN_START_BASE + 10000 && IsPlayerAdmin(player))
             {
-                uint32 tournamentId = action - 5000;
+                uint32 tournamentId = action - NPC_ARENA_1V1_ACTION_ADMIN_START_BASE;
                 if (sTournamentSystem->StartTournament(tournamentId))
                 {
                     ChatHandler(player->GetSession()).PSendSysMessage("Tournament {} started successfully!", tournamentId);
@@ -582,20 +587,20 @@ bool npc_1v1arena::OnGossipSelect(Player* player, Creature* creature, uint32 /*s
                 }
                 ShowStartTournamentMenu(player, creature);
             }
-            // Admin tournament cancel actions (6000+ range)
-            else if (action >= 6000 && action < 7000 && IsPlayerAdmin(player))
+            // Admin tournament cancel actions (50000+ range)
+            else if (action >= NPC_ARENA_1V1_ACTION_ADMIN_CANCEL_BASE && action < NPC_ARENA_1V1_ACTION_ADMIN_CANCEL_BASE + 10000 && IsPlayerAdmin(player))
             {
-                uint32 tournamentId = action - 6000;
+                uint32 tournamentId = action - NPC_ARENA_1V1_ACTION_ADMIN_CANCEL_BASE;
                 if (sTournamentSystem->CancelTournament(tournamentId))
                     ChatHandler(player->GetSession()).PSendSysMessage("Tournament {} cancelled successfully!", tournamentId);
                 else
                     ChatHandler(player->GetSession()).PSendSysMessage("Failed to cancel tournament {} (invalid status).", tournamentId);
                 ShowCancelTournamentMenu(player, creature);
             }
-            // View participants actions (7000+ range)
-            else if (action >= 7000 && action < 8000)
+            // View participants actions (60000+ range)
+            else if (action >= NPC_ARENA_1V1_ACTION_ADMIN_PARTICIPANTS_BASE && action < NPC_ARENA_1V1_ACTION_ADMIN_PARTICIPANTS_BASE + 10000)
             {
-                uint32 tournamentId = action - 7000;
+                uint32 tournamentId = action - NPC_ARENA_1V1_ACTION_ADMIN_PARTICIPANTS_BASE;
                 ShowTournamentParticipants(player, creature, tournamentId);
             }
         }
@@ -1100,7 +1105,7 @@ void npc_1v1arena::ShowTournamentDetails(Player* player, Creature* creature, uin
     
     // Show participant list option
     AddGossipItemFor(player, GOSSIP_ICON_TRAINER, "|cFF9370DB|TInterface/ICONS/Achievement_BG_returnXflags_def_WSG:30:30:-20:0|t|r View Participants|r", 
-        GOSSIP_SENDER_MAIN, 7000 + tournamentId);
+        GOSSIP_SENDER_MAIN, NPC_ARENA_1V1_ACTION_ADMIN_PARTICIPANTS_BASE + tournamentId);
     
     SendGossipMenuFor(player, NPC_TEXT_ENTRY_1v1, creature->GetGUID());
 }
@@ -1484,7 +1489,7 @@ void npc_1v1arena::ShowStartTournamentMenu(Player* player, Creature* creature)
         
         if (current >= 2)
             AddGossipItemFor(player, GOSSIP_ICON_BATTLE, ("|cFF00FF00Start: " + name + "|r").c_str(), 
-                GOSSIP_SENDER_MAIN, 5000 + tournamentId);
+                GOSSIP_SENDER_MAIN, NPC_ARENA_1V1_ACTION_ADMIN_START_BASE + tournamentId);
         
         info << "\n";
         
@@ -1531,7 +1536,7 @@ void npc_1v1arena::ShowCancelTournamentMenu(Player* player, Creature* creature)
         info << "\n   |cFF9370DBParticipants:|r |cFFFFFFFF" << participants << "|r";
         
         AddGossipItemFor(player, GOSSIP_ICON_DOT, ("|cFFFF0000Cancel: " + name + "|r").c_str(), 
-            GOSSIP_SENDER_MAIN, 6000 + tournamentId, 
+            GOSSIP_SENDER_MAIN, NPC_ARENA_1V1_ACTION_ADMIN_CANCEL_BASE + tournamentId, 
             ("Are you sure you want to cancel tournament '" + name + "'? This will refund all entry fees.").c_str(), 0, false);
         
         info << "\n";
