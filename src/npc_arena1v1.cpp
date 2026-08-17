@@ -23,6 +23,7 @@
 #include "Chat.h"
 #include "npc_1v1arena.h"
 #include "TournamentSystem.h"
+#include "TournamentCurrency.h"
 #include "DatabaseEnv.h"
 #include "ObjectAccessor.h"
 #include "ObjectGuid.h"
@@ -176,10 +177,12 @@ public:
             }
             
             // Create tournament with default settings
-            uint32 entryFee = sConfigMgr->GetOption<uint32>("Tournament.DefaultEntryFee", 100) * 10000;
+            uint32 baseEntryFee = sConfigMgr->GetOption<uint32>("Tournament.DefaultEntryFee", 100);
+            uint32 entryFee = TournamentCurrency::ToCopper(baseEntryFee);
             uint32 registrationHours = sConfigMgr->GetOption<uint32>("Tournament.DefaultRegistrationHours", 24);
             uint32 maxParticipants = sConfigMgr->GetOption<uint32>("Tournament.DefaultMaxParticipants", 16);
-            uint32 winnerGold = sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardGold", 500) * 10000;
+            uint32 baseWinnerGold = sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardGold", 500);
+            uint32 winnerGold = TournamentCurrency::ToCopper(baseWinnerGold);
             uint32 winnerItem = sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardItem", 0);
             uint32 winnerTitle = sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerTitle", 0);
             
@@ -195,17 +198,17 @@ public:
                 std::ostringstream success;
                 success << "|cFF00FF00Tournament '|cFFFFD700" << tournamentName << "|cFF00FF00' created successfully!|r";
                 success << "\n|cFFFFD700Tournament ID:|r |cFFFFFFFF" << tournamentId << "|r";
-                success << "\n|cFFFFD700Entry Fee:|r |cFFFFD700" << (entryFee / 10000) << " gold|r";
+                success << "\n|cFFFFD700Entry Fee:|r |cFFFFD700" << TournamentCurrency::ToGold(entryFee) << " gold|r";
                 success << "\n|cFFFFD700Registration:|r |cFFFFFFFF" << registrationHours << " hours|r";
                 success << "\n|cFFFFD700Max Players:|r |cFFFFFFFF" << maxParticipants << "|r";
-                success << "\n|cFFFFD700Winner Prize:|r |cFFFFD700" << (winnerGold / 10000) << " gold|r";
+                success << "\n|cFFFFD700Winner Prize:|r |cFFFFD700" << TournamentCurrency::ToGold(winnerGold) << " gold|r";
                 
                 ChatHandler(player->GetSession()).PSendSysMessage("{}", success.str());
                 
                 // Announce to server
                 std::ostringstream announce;
                 announce << "|cFFFFD700[Tournament]|r New tournament '|cFF00FF00" << tournamentName 
-                         << "|r' created by GM! Entry fee: |cFFFFD700" << (entryFee / 10000) 
+                         << "|r' created by GM! Entry fee: |cFFFFD700" << TournamentCurrency::ToGold(entryFee)
                          << "|r gold. Registration open for |cFF00FFFF" << registrationHours << "|r hours!";
                 sWorld->SendServerMessage(SERVER_MSG_STRING, announce.str().c_str());
             }
@@ -282,7 +285,8 @@ bool npc_1v1arena::OnGossipHello(Player* player, Creature* creature)
 
     if (!teamExistForPlayerGuid(player))
     {
-        AddGossipItemFor(player, GOSSIP_ICON_VENDOR, "|cFF32CD32|TInterface/ICONS/Achievement_Arena_2v2_7:30:30:-20:0|t|r |cFF32CD32Create Arena Team|r", GOSSIP_SENDER_MAIN, NPC_ARENA_1V1_ACTION_CREATE_ARENA_TEAM, "Are you sure you want to create a new 1v1 Arena Team?\n\nCost: " + std::to_string(sConfigMgr->GetOption<uint32>("Arena1v1.Costs", 400000) / 10000) + " gold", sConfigMgr->GetOption<uint32>("Arena1v1.Costs", 400000), false);
+        uint32 arenaTeamCost = sConfigMgr->GetOption<uint32>("Arena1v1.Costs", 400000);
+        AddGossipItemFor(player, GOSSIP_ICON_VENDOR, "|cFF32CD32|TInterface/ICONS/Achievement_Arena_2v2_7:30:30:-20:0|t|r |cFF32CD32Create Arena Team|r", GOSSIP_SENDER_MAIN, NPC_ARENA_1V1_ACTION_CREATE_ARENA_TEAM, "Are you sure you want to create a new 1v1 Arena Team?\n\nCost: " + std::to_string(TournamentCurrency::ToGold(arenaTeamCost)) + " gold", arenaTeamCost, false);
     }
     else
     {
@@ -995,7 +999,7 @@ void npc_1v1arena::ShowTournamentDetails(Player* player, Creature* creature, uin
     else details << "|cFFFF0000" << status << "|r";
     
     details << "\n\n|cFFFFD700--- Participation Info ---|r";
-    details << "\n|cFF00FF00Entry Fee:|r |cFFFFD700" << (entryFee / 10000) << " gold|r";
+    details << "\n|cFF00FF00Entry Fee:|r |cFFFFD700" << TournamentCurrency::ToGold(entryFee) << " gold|r";
     details << "\n|cFF00FF00Participants:|r |cFFFFFFFF" << currentParticipants << "/" << maxParticipants << "|r";
     
     if (status == "registration")
@@ -1041,7 +1045,7 @@ void npc_1v1arena::ShowTournamentDetails(Player* player, Creature* creature, uin
     }
     
     details << "\n\n|cFFFFD700--- Rewards ---|r";
-    details << "\n|cFFFFD700Winner:|r |cFFFFD700" << (winnerGold / 10000) << " gold|r";
+    details << "\n|cFFFFD700Winner:|r |cFFFFD700" << TournamentCurrency::ToGold(winnerGold) << " gold|r";
     if (winnerItem > 0)
         details << " + |cFF00FF00Item " << winnerItem << "|r";
     if (winnerTitle > 0)
@@ -1076,7 +1080,7 @@ void npc_1v1arena::ShowTournamentDetails(Player* player, Creature* creature, uin
             AddGossipItemFor(player, GOSSIP_ICON_MONEY_BAG, 
                 "|cFF00FF00|TInterface/ICONS/INV_Misc_Coin_17:30:30:-20:0|t|r |cFF00FF00Register for Tournament|r", 
                 GOSSIP_SENDER_MAIN, NPC_ARENA_1V1_ACTION_TOURNAMENT_REGISTER_BASE + tournamentId,
-                ("Are you sure you want to register for '" + name + "'?\n\nEntry fee: " + std::to_string(entryFee / 10000) + " gold").c_str(),
+                ("Are you sure you want to register for '" + name + "'?\n\nEntry fee: " + std::to_string(TournamentCurrency::ToGold(entryFee)) + " gold").c_str(),
                 entryFee, false);
         }
         else
@@ -1219,7 +1223,7 @@ void npc_1v1arena::ShowMyTournaments(Player* player, Creature* creature)
     statsInfo << "\n|cFFFFD700Tournaments Won: |cFF00FF00" << stats["tournaments_won"] << "|r";
     statsInfo << "\n|cFFFFD700Total Matches Played: |cFFFFFFFF" << stats["total_matches_played"] << "|r";
     statsInfo << "\n|cFFFFD700Total Matches Won: |cFF00FF00" << stats["total_matches_won"] << "|r";
-    statsInfo << "\n|cFFFFD700Total Gold Earned: |cFFFFD700" << (stats["total_gold_earned"] / 10000) << "|r gold";
+    statsInfo << "\n|cFFFFD700Total Gold Earned: |cFFFFD700" << TournamentCurrency::ToGold(stats["total_gold_earned"]) << "|r gold";
     
     if (stats["total_matches_played"] > 0)
     {
@@ -1648,8 +1652,8 @@ void npc_1v1arena::ShowAllTournamentsAdmin(Player* player, Creature* creature)
         info << "\n|cFF00FFFF[" << id << "]|r |cFFFFFFFF" << name << "|r";
         info << "\n   |cFF9370DBStatus:|r |c" << statusColor << status << "|r";
         info << "\n   |cFF9370DBParticipants:|r |cFFFFFFFF" << current << "/" << max << "|r";
-        info << "\n   |cFF9370DBEntry Fee:|r |cFFFFD700" << (entryFee / 10000) << "g|r";
-        info << "\n   |cFF9370DBWinner Prize:|r |cFFFFD700" << (winnerGold / 10000) << "g|r";
+        info << "\n   |cFF9370DBEntry Fee:|r |cFFFFD700" << TournamentCurrency::ToGold(entryFee) << "g|r";
+        info << "\n   |cFF9370DBWinner Prize:|r |cFFFFD700" << TournamentCurrency::ToGold(winnerGold) << "g|r";
         
         if (tStart > 0)
             info << "\n   |cFF9370DBStarted:|r |cFFFFFFFF" << FormatTime(tStart) << "|r";
@@ -1657,7 +1661,7 @@ void npc_1v1arena::ShowAllTournamentsAdmin(Player* player, Creature* creature)
             info << "\n   |cFF9370DBReg. End:|r |cFFFFFFFF" << FormatTime(regEnd) << "|r";
         
         info << "\n";
-        
+    
     } while (result->NextRow());
     
     handler.PSendSysMessage("{}", info.str());
@@ -1684,10 +1688,10 @@ void npc_1v1arena::CreateTournamentFromMenu(Player* player, const std::string& n
         success << "|cFF00FF00Tournament created successfully!|r";
         success << "\n|cFFFFD700Tournament ID:|r |cFFFFFFFF" << tournamentId << "|r";
         success << "\n|cFFFFD700Name:|r |cFFFFFFFF" << name << "|r";
-        success << "\n|cFFFFD700Entry Fee:|r |cFFFFD700" << (entryFee / 10000) << " gold|r";
+        success << "\n|cFFFFD700Entry Fee:|r |cFFFFD700" << TournamentCurrency::ToGold(entryFee) << " gold|r";
         success << "\n|cFFFFD700Registration:|r |cFFFFFFFF" << registrationHours << " hours|r";
         success << "\n|cFFFFD700Max Players:|r |cFFFFFFFF" << maxParticipants << "|r";
-        success << "\n|cFFFFD700Winner Prize:|r |cFFFFD700" << (winnerGold / 10000) << " gold|r";
+        success << "\n|cFFFFD700Winner Prize:|r |cFFFFD700" << TournamentCurrency::ToGold(winnerGold) << " gold|r";
         if (winnerItem > 0)
             success << "\n|cFFFFD700Winner Item:|r |cFF00FF00Item ID " << winnerItem << "|r";
         if (winnerTitle > 0)
@@ -1698,7 +1702,7 @@ void npc_1v1arena::CreateTournamentFromMenu(Player* player, const std::string& n
         // Announce to server
         std::ostringstream announce;
         announce << "|cFFFFD700[Tournament]|r New tournament '|cFF00FF00" << name 
-                 << "|r' created by GM! Entry fee: |cFFFFD700" << (entryFee / 10000) 
+                 << "|r' created by GM! Entry fee: |cFFFFD700" << TournamentCurrency::ToGold(entryFee)
                  << "|r gold. Registration open for |cFF00FFFF" << registrationHours << "|r hours!";
         sWorld->SendServerMessage(SERVER_MSG_STRING, announce.str().c_str());
     }

@@ -2,6 +2,7 @@
 
 AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src/npc_arena1v1.cpp")
 AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src/TournamentSystem.cpp")
+AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src/TournamentRepository.cpp")
 AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src/tournament_commands.cpp")
 AC_ADD_SCRIPT("${CMAKE_CURRENT_LIST_DIR}/src/cs_1v1arena.cpp")
 
