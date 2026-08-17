@@ -5,30 +5,33 @@
 #include "Config.h"
 #include <sstream>
 
+using namespace Acore::ChatCommands;
+
 class tournament_commandscript : public CommandScript
 {
 public:
     tournament_commandscript() : CommandScript("tournament_commandscript") { }
 
-    std::vector<ChatCommand> GetCommands() const override
+    ChatCommandTable GetCommands() const override
     {
-        static std::vector<ChatCommand> tournamentCommandTable =
+        static ChatCommandTable tournamentCommandTable =
         {
-            { "create",   SEC_GAMEMASTER, false, &HandleTournamentCreateCommand,   "Create a new tournament" },
-            { "start",    SEC_GAMEMASTER, false, &HandleTournamentStartCommand,    "Start a tournament" },
-            { "cancel",   SEC_GAMEMASTER, false, &HandleTournamentCancelCommand,   "Cancel a tournament" },
-            { "list",     SEC_GAMEMASTER, false, &HandleTournamentListCommand,     "List all tournaments" },
-            { "info",     SEC_GAMEMASTER, false, &HandleTournamentInfoCommand,     "Get tournament info" },
-            { "config",   SEC_GAMEMASTER, false, &HandleTournamentConfigCommand,   "Show tournament config" },
-            { "test",     SEC_GAMEMASTER, false, &HandleTournamentTestCommand,     "Test tournament rewards" },
-            { "register", SEC_PLAYER,     false, &HandleTournamentRegisterCommand, "Register for tournament" },
-            { "bracket",  SEC_PLAYER,     false, &HandleTournamentBracketCommand,  "View tournament bracket" },
+            { "create",   HandleTournamentCreateCommand,   SEC_GAMEMASTER, Console::No, "Create a new tournament" },
+            { "start",    HandleTournamentStartCommand,    SEC_GAMEMASTER, Console::No, "Start a tournament" },
+            { "cancel",   HandleTournamentCancelCommand,   SEC_GAMEMASTER, Console::No, "Cancel a tournament" },
+            { "list",     HandleTournamentListCommand,     SEC_GAMEMASTER, Console::No, "List all tournaments" },
+            { "info",     HandleTournamentInfoCommand,     SEC_GAMEMASTER, Console::No, "Get tournament info" },
+            { "config",   HandleTournamentConfigCommand,   SEC_GAMEMASTER, Console::No, "Show tournament config" },
+            { "test",     HandleTournamentTestCommand,     SEC_GAMEMASTER, Console::No, "Test tournament rewards" },
+            { "register", HandleTournamentRegisterCommand, SEC_PLAYER,     Console::No, "Register for tournament" },
+            { "bracket",  HandleTournamentBracketCommand,  SEC_PLAYER,     Console::No, "View tournament bracket" },
         };
 
-        static std::vector<ChatCommand> commandTable =
+        static ChatCommandTable commandTable =
         {
-            { "tournament", SEC_PLAYER, false, nullptr, "", tournamentCommandTable },
+            { "tournament", tournamentCommandTable },
         };
+
         return commandTable;
     }
 
@@ -97,16 +100,16 @@ public:
 
         if (tournamentId > 0)
         {
-            handler->PSendSysMessage("Tournament created successfully! ID: %u", tournamentId);
-            handler->PSendSysMessage("Name: %s", name.c_str());
-            handler->PSendSysMessage("Entry Fee: %u gold", entryFee / 10000);
-            handler->PSendSysMessage("Registration Period: %u hours", regHours);
-            handler->PSendSysMessage("Max Participants: %u", maxParticipants);
-            handler->PSendSysMessage("Winner Reward: %u gold", winnerReward / 10000);
+            handler->PSendSysMessage("Tournament created successfully! ID: {}", tournamentId);
+            handler->PSendSysMessage("Name: {}", name);
+            handler->PSendSysMessage("Entry Fee: {} gold", entryFee / 10000);
+            handler->PSendSysMessage("Registration Period: {} hours", regHours);
+            handler->PSendSysMessage("Max Participants: {}", maxParticipants);
+            handler->PSendSysMessage("Winner Reward: {} gold", winnerReward / 10000);
             if (itemReward > 0)
-                handler->PSendSysMessage("Winner Item: ID %u", itemReward);
+                handler->PSendSysMessage("Winner Item: ID {}", itemReward);
             if (titleReward > 0)
-                handler->PSendSysMessage("Winner Title: ID %u", titleReward);
+                handler->PSendSysMessage("Winner Title: ID {}", titleReward);
         }
         else
         {
@@ -133,11 +136,11 @@ public:
 
         if (sTournamentSystem->StartTournament(tournamentId))
         {
-            handler->PSendSysMessage("Tournament %u started successfully!", tournamentId);
+            handler->PSendSysMessage("Tournament {} started successfully!", tournamentId);
         }
         else
         {
-            handler->PSendSysMessage("Failed to start tournament %u!", tournamentId);
+            handler->PSendSysMessage("Failed to start tournament {}!", tournamentId);
         }
 
         return true;
@@ -160,11 +163,11 @@ public:
 
         if (sTournamentSystem->CancelTournament(tournamentId))
         {
-            handler->PSendSysMessage("Tournament %u cancelled successfully!", tournamentId);
+            handler->PSendSysMessage("Tournament {} cancelled successfully!", tournamentId);
         }
         else
         {
-            handler->PSendSysMessage("Failed to cancel tournament %u!", tournamentId);
+            handler->PSendSysMessage("Failed to cancel tournament {}!", tournamentId);
         }
 
         return true;
@@ -183,9 +186,9 @@ public:
         handler->PSendSysMessage("=== Tournament List ===");
         for (const auto& tournament : tournaments)
         {
-            handler->PSendSysMessage("ID: %u | %s | Status: %s | Participants: %u/%u", 
-                tournament.id, tournament.name.c_str(), 
-                sTournamentSystem->GetTournamentStatusString(tournament.status).c_str(),
+            handler->PSendSysMessage("ID: {} | {} | Status: {} | Participants: {}/{}", 
+                tournament.id, tournament.name, 
+                sTournamentSystem->GetTournamentStatusString(tournament.status),
                 tournament.currentParticipants, tournament.maxParticipants);
         }
 
@@ -215,13 +218,13 @@ public:
         }
 
         handler->PSendSysMessage("=== Tournament Info ===");
-        handler->PSendSysMessage("ID: %u", info.id);
-        handler->PSendSysMessage("Name: %s", info.name.c_str());
-        handler->PSendSysMessage("Description: %s", info.description.c_str());
-        handler->PSendSysMessage("Entry Fee: %u gold", info.entryFee / 10000);
-        handler->PSendSysMessage("Participants: %u/%u", info.currentParticipants, info.maxParticipants);
-        handler->PSendSysMessage("Status: %s", sTournamentSystem->GetTournamentStatusString(info.status).c_str());
-        handler->PSendSysMessage("Winner Reward: %u gold", info.winnerRewardGold / 10000);
+        handler->PSendSysMessage("ID: {}", info.id);
+        handler->PSendSysMessage("Name: {}", info.name);
+        handler->PSendSysMessage("Description: {}", info.description);
+        handler->PSendSysMessage("Entry Fee: {} gold", info.entryFee / 10000);
+        handler->PSendSysMessage("Participants: {}/{}", info.currentParticipants, info.maxParticipants);
+        handler->PSendSysMessage("Status: {}", sTournamentSystem->GetTournamentStatusString(info.status));
+        handler->PSendSysMessage("Winner Reward: {} gold", info.winnerRewardGold / 10000);
 
         return true;
     }
@@ -229,19 +232,19 @@ public:
     static bool HandleTournamentConfigCommand(ChatHandler* handler, const char* /*args*/)
     {
         handler->PSendSysMessage("=== Tournament Configuration ===");
-        handler->PSendSysMessage("System Enabled: %s", sConfigMgr->GetOption<bool>("Tournament.Enable", true) ? "Yes" : "No");
-        handler->PSendSysMessage("Default Entry Fee: %u gold", sConfigMgr->GetOption<uint32>("Tournament.DefaultEntryFee", 50));
-        handler->PSendSysMessage("Default Winner Reward: %u gold", sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardGold", 500));
-        handler->PSendSysMessage("Default Runner-up Reward: %u gold", sConfigMgr->GetOption<uint32>("Tournament.RunnerUpRewardGold", 100));
-        handler->PSendSysMessage("Default Semi-finalist Reward: %u gold", sConfigMgr->GetOption<uint32>("Tournament.SemiFinalistRewardGold", 25));
-        handler->PSendSysMessage("Default Winner Item: %u", sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardItem", 0));
-        handler->PSendSysMessage("Default Winner Title: %u", sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerTitle", 0));
-        handler->PSendSysMessage("Default Registration Duration: %u hours", sConfigMgr->GetOption<uint32>("Tournament.DefaultRegistrationDuration", 48));
-        handler->PSendSysMessage("Default Max Participants: %u", sConfigMgr->GetOption<uint32>("Tournament.DefaultMaxParticipants", 64));
-        handler->PSendSysMessage("Min Participants to Start: %u", sConfigMgr->GetOption<uint32>("Tournament.MinimumParticipantsToStart", 2));
-        handler->PSendSysMessage("Forfeit After Attempts: %u", sConfigMgr->GetOption<uint32>("Tournament.ForfeitAfterAttempts", 3));
-        handler->PSendSysMessage("Server Announcements: %s", sConfigMgr->GetOption<bool>("Tournament.EnableServerAnnouncements", true) ? "Enabled" : "Disabled");
-        handler->PSendSysMessage("Auto Cleanup Days: %u", sConfigMgr->GetOption<uint32>("Tournament.AutoCleanupDays", 30));
+        handler->PSendSysMessage("System Enabled: {}", sConfigMgr->GetOption<bool>("Tournament.Enable", true) ? "Yes" : "No");
+        handler->PSendSysMessage("Default Entry Fee: {} gold", sConfigMgr->GetOption<uint32>("Tournament.DefaultEntryFee", 50));
+        handler->PSendSysMessage("Default Winner Reward: {} gold", sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardGold", 500));
+        handler->PSendSysMessage("Default Runner-up Reward: {} gold", sConfigMgr->GetOption<uint32>("Tournament.RunnerUpRewardGold", 100));
+        handler->PSendSysMessage("Default Semi-finalist Reward: {} gold", sConfigMgr->GetOption<uint32>("Tournament.SemiFinalistRewardGold", 25));
+        handler->PSendSysMessage("Default Winner Item: {}", sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerRewardItem", 0));
+        handler->PSendSysMessage("Default Winner Title: {}", sConfigMgr->GetOption<uint32>("Tournament.DefaultWinnerTitle", 0));
+        handler->PSendSysMessage("Default Registration Duration: {} hours", sConfigMgr->GetOption<uint32>("Tournament.DefaultRegistrationDuration", 48));
+        handler->PSendSysMessage("Default Max Participants: {}", sConfigMgr->GetOption<uint32>("Tournament.DefaultMaxParticipants", 64));
+        handler->PSendSysMessage("Min Participants to Start: {}", sConfigMgr->GetOption<uint32>("Tournament.MinimumParticipantsToStart", 2));
+        handler->PSendSysMessage("Forfeit After Attempts: {}", sConfigMgr->GetOption<uint32>("Tournament.ForfeitAfterAttempts", 3));
+        handler->PSendSysMessage("Server Announcements: {}", sConfigMgr->GetOption<bool>("Tournament.EnableServerAnnouncements", true) ? "Enabled" : "Disabled");
+        handler->PSendSysMessage("Auto Cleanup Days: {}", sConfigMgr->GetOption<uint32>("Tournament.AutoCleanupDays", 30));
         
         return true;
     }
@@ -274,20 +277,20 @@ public:
             if (goldAmount > 0)
             {
                 player->ModifyMoney(goldAmount);
-                handler->PSendSysMessage("Added %u gold to your character", goldAmount / 10000);
+                handler->PSendSysMessage("Added {} gold to your character", goldAmount / 10000);
             }
             
             // Give item (basic implementation)
             if (itemId > 0)
             {
-                handler->PSendSysMessage("Item reward would be given: ID %u", itemId);
+                handler->PSendSysMessage("Item reward would be given: ID {}", itemId);
                 // Note: Full item implementation would require ItemTemplate validation
             }
             
             // Give title (basic implementation)
             if (titleId > 0)
             {
-                handler->PSendSysMessage("Title reward would be given: ID %u", titleId);
+                handler->PSendSysMessage("Title reward would be given: ID {}", titleId);
                 // Note: Full title implementation would require CharTitles validation
             }
             
@@ -319,11 +322,11 @@ public:
         Player* player = handler->GetSession()->GetPlayer();
         if (sTournamentSystem->RegisterPlayer(tournamentId, player))
         {
-            handler->PSendSysMessage("Successfully registered for tournament %u!", tournamentId);
+            handler->PSendSysMessage("Successfully registered for tournament {}!", tournamentId);
         }
         else
         {
-            handler->PSendSysMessage("Failed to register for tournament %u!", tournamentId);
+            handler->PSendSysMessage("Failed to register for tournament {}!", tournamentId);
         }
 
         return true;
@@ -348,32 +351,32 @@ public:
         
         if (rounds.empty())
         {
-            handler->PSendSysMessage("No bracket data available for tournament %u.", tournamentId);
+            handler->PSendSysMessage("No bracket data available for tournament {}.", tournamentId);
             return true;
         }
 
         handler->PSendSysMessage("=== Tournament Bracket ===");
         for (const auto& round : rounds)
         {
-            handler->PSendSysMessage("== %s ==", round.roundName.c_str());
+            handler->PSendSysMessage("== {} ==", round.roundName);
             
             for (const auto& match : round.matches)
             {
                 if (match.player2Guid == 0)
                 {
-                    handler->PSendSysMessage("Match %u: %s (BYE)", match.matchNumber, match.player1Name.c_str());
+                    handler->PSendSysMessage("Match {}: {} (BYE)", match.matchNumber, match.player1Name);
                 }
                 else if (match.status == MATCH_STATUS_COMPLETED)
                 {
                     std::string winnerName = (match.winnerGuid == match.player1Guid) ? match.player1Name : match.player2Name;
                     std::string loserName = (match.winnerGuid == match.player1Guid) ? match.player2Name : match.player1Name;
-                    handler->PSendSysMessage("Match %u: %s def. %s", match.matchNumber, winnerName.c_str(), loserName.c_str());
+                    handler->PSendSysMessage("Match {}: {} def. {}", match.matchNumber, winnerName, loserName);
                 }
                 else
                 {
                     std::string status = (match.status == MATCH_STATUS_ACTIVE) ? "(Active)" : "(Pending)";
-                    handler->PSendSysMessage("Match %u: %s vs %s %s", match.matchNumber, 
-                        match.player1Name.c_str(), match.player2Name.c_str(), status.c_str());
+                    handler->PSendSysMessage("Match {}: {} vs {} {}", match.matchNumber, 
+                        match.player1Name, match.player2Name, status);
                 }
             }
         }
