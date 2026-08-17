@@ -1881,9 +1881,7 @@ public:
     }
 };
 
-// Forward declarations
-void AddSC_TournamentSystem();
-void AddSC_tournament_commandscript();
+// Forward declarations removed - scripts are now loaded via 1v1_loader.cpp
 
 void AddSC_npc_1v1arena()
 {
@@ -1891,6 +1889,4 @@ void AddSC_npc_1v1arena()
     new playerscript_1v1arena();
     new npc_1v1arena();
     new team_1v1arena();
-    AddSC_TournamentSystem();
-    AddSC_tournament_commandscript();
 }
